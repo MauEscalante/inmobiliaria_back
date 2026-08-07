@@ -1,10 +1,9 @@
-from fastapi import APIRouter
-from openpyxl import load_workbook
-from copy import copy
+from fastapi import APIRouter, HTTPException
+from app.api.controllers.recibo_controller import get_recibos_ajustar, actualizar_recibos
 
 router = APIRouter(prefix="/recibos", tags=["recibos"])
 
-wb = load_workbook("templates/RECIBO INMOBILIARIO.xlsx")
+
 
 @router.get("/")
 def get_recibos() -> dict:
@@ -14,29 +13,16 @@ def get_recibos() -> dict:
         "hojas": ws
     }
 
-@router.get("/actualizar")
-def actualizar_fecha() -> dict:
-        actualizar =get_recibos_ajustar() #trae recibos a actualizar
-        print(actualizar)
-        #recorre todas las hojas del excel
-        for recibo in wb.sheetnames:
-            ws = wb[recibo]
-            #cambia la fecha del recibo y el mes
-            ws["I13"].value = 8
-            ws["C22"].value = "AGOSTO"
+@router.post("/re-ajuste/{mes_liquidacion}/{anio_liquidacion}")
+def actualizar_fecha(mes_liquidacion: int, anio_liquidacion: int):
+    actualizar_recibos(mes_liquidacion, anio_liquidacion)
+        
 
-            if recibo in actualizar: #si tiene q actualizar 
-                estilo = copy(ws["E22"]._style) #copia formato de la celda
-                ws["E22"].value = 100000  #asigna el valor
-                ws["E22"]._style = estilo #pega formato de celda
-                print("ENTRO")
-        wb.save("templates/RECIBO INMOBILIARIO.xlsx")
-        print("READY")
-        return {
-            "cantidad_hojas": "LISTO",
-        } 
 
-def get_recibos_ajustar() -> list:
-    recibos = ["00000(2)","00000(4)"]
-   
-    return recibos
+@router.get("/ajustar/{mes_liquidacion}/{anio_liquidacion}")
+def ajustar_recibos(mes_liquidacion: int, anio_liquidacion: int) -> list:
+    try:
+        recibos_ajustar = get_recibos_ajustar(mes_liquidacion, anio_liquidacion)
+        return recibos_ajustar
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
