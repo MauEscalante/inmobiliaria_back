@@ -1,7 +1,5 @@
 from app.api.services.recibo_service import get_propiedades_ajustar, actualizar_fechas, actualizar_ipc,get_ipc
-from copy import copy
 from openpyxl import load_workbook
-from time import perf_counter
 
 def get_recibos_ajustar(mes_liquidacion: int, año_liquidacion: int) -> list:
     try:
