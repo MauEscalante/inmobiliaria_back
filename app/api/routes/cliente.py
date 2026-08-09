@@ -1,20 +1,20 @@
 from fastapi import APIRouter
-from api.controllers.cliente_controller import get_all_usuarios, get_usuario, create_new_usuario, update_email, update_telefono, delete_existing_usuario
+from app.api.controllers.cliente_controller import get_all_clientes, get_cliente, create_new_cliente, update_email, update_telefono
 
 
 router = APIRouter(prefix="/inquilinos", tags=["inquilinos"])
 
 @router.get("/")
 async def get_inquilinos():
-    return get_all_usuarios()
+    return get_all_clientes()
 
 @router.get("/{id}")
 async def get_inquilino(id: int):
-    return get_usuario(id)
+    return get_cliente(id)
 
 @router.post("/register")
-async def create_inquilino(usuario_data: dict):
-    return create_new_usuario(usuario_data)
+async def create_inquilino(cliente_data: dict):
+    return create_new_cliente(cliente_data)
 
 @router.put("/email/{id}")
 async def update_inquilino_email(id: int, email: str):

@@ -13,8 +13,9 @@ def get_clientes() -> list:
 def get_cliente_by_id(cliente_id: int) -> Cliente:
     try:
         db= SessionLocal()
-        cliente= db.query(Cliente).filter(Cliente.id==cliente_id).first()
-        return cliente
+        query= text("""SELECT * FROM cliente WHERE cliente_num = :cliente_id""")
+        cliente= db.execute(query, {"cliente_id": cliente_id}).mappings().first()
+        return dict(cliente) if cliente else None
     except Exception as e:
         raise e
     
@@ -42,13 +43,13 @@ def update_email(cliente_id: int, email: str) -> Cliente:
     except Exception as e:
         raise e
     
-def update_telefono(cliente_id: int, telefono: str) -> Cliente:
+def update_celular(cliente_id: int, telefono: str) -> Cliente:
     try:
         db= SessionLocal()
         query=text("""
         UPDATE cliente
         SET telefono= :telefono
-        WHERE id= :cliente_id
+        WHERE cliente_num= :cliente_id
         """)
         db.execute(query, {"telefono": telefono, "cliente_id": cliente_id})
         db.commit()
