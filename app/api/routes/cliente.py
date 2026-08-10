@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from app.api.controllers.cliente_controller import get_all_clientes, get_cliente, create_new_cliente, update_email, update_telefono
 
 
-router = APIRouter(prefix="/inquilinos", tags=["inquilinos"])
+router = APIRouter(prefix="/clientes", tags=["inquilinos"])
 
 @router.get("/")
 async def get_inquilinos():
