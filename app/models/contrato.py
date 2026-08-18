@@ -1,21 +1,31 @@
 from sqlalchemy import Column, Date, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import relationship
-
+from enum import Enum
+from sqlalchemy import Enum as SQLEnum
 from app.database.connection import Base
+
+class TipoAjuste (str, Enum):
+	IPC="IPC"
+	ICL="ICL"
+ 
+class EstadoContrato (str, Enum):
+	Activo="Activo"
+	Inactivo="Inactivo"
 
 
 class Contrato(Base):
 	__tablename__ = "contrato"
 
 	contrato_id = Column(Integer, primary_key=True, index=True)
-	propiedad_id = Column(Integer, ForeignKey("propiedad.propiedad_id"), nullable=False, index=True)
+	propiedad = Column(Integer, ForeignKey("propiedad.propiedad_id"), nullable=False, index=True)
 	fecha_inicio = Column(Date, nullable=False)
 	fecha_fin = Column(Date, nullable=False)
-	tipo_ajuste = Column(String(50), nullable=True)
+	tipo_ajuste = Column(SQLEnum(TipoAjuste), nullable=True)
 	periodicidad = Column(Integer, nullable=True)
 	importe_inicial = Column(Numeric(12, 2), nullable=False)
+	estado = Column(SQLEnum(EstadoContrato), nullable=False)
 
-	propiedad = relationship("Propiedad", back_populates="contratos")
+	propiedad_obj = relationship("Propiedad", back_populates="contratos")
 	inquilinos = relationship("ContratoInquilino", back_populates="contrato", cascade="all, delete-orphan")
 
 

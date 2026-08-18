@@ -11,7 +11,7 @@ class Propiedad(Base):
 	direccion = Column(String(255), nullable=False)
 
 	propietarios = relationship("PropiedadPropietario", back_populates="propiedad", cascade="all, delete-orphan")
-	contratos = relationship("Contrato", back_populates="propiedad", cascade="all, delete-orphan")
+	contratos = relationship("Contrato", back_populates="propiedad_obj", cascade="all, delete-orphan")
 
 
 class PropiedadPropietario(Base):
