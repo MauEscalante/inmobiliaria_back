@@ -6,6 +6,7 @@ def get_contratos():
     db = SessionLocal()
     try:
         contratos=db.query(Contrato).all()
+    
         return contratos
     finally:
         db.close()

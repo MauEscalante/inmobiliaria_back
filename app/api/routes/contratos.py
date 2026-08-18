@@ -5,6 +5,7 @@ router = APIRouter(prefix="/contratos", tags=["contratos"])
 
 @router.get("/")
 async def get_contratos():
+    print("CONTECTADO")
     return get_all_contratos()
 
 @router.get("/{id}")
