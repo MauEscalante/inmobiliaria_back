@@ -17,6 +17,11 @@ class TipoGarantia (str, Enum):
 	GarantiaPropietaria="Garantia Propietaria"
 	Garantes="Garantes"
 
+class PeriodicidadContrato (str, Enum):
+	Trimestral="Trimestral"
+	Cuatrimestral="Cuatrimestral"
+	Semestral="Semestral"
+
 
 class Contrato(Base):
 	__tablename__ = "contrato"
@@ -26,7 +31,7 @@ class Contrato(Base):
 	fecha_inicio = Column(Date, nullable=False)
 	fecha_fin = Column(Date, nullable=False)
 	tipo_ajuste = Column(SQLEnum(TipoAjuste), nullable=True)
-	periodicidad = Column(Integer, nullable=True)
+	periodicidad = Column(SQLEnum(PeriodicidadContrato), nullable=True)
 	importe_inicial = Column(Numeric(12, 2), nullable=False)
 	deposito = Column(Numeric(12, 2), nullable=True)
 	estado = Column(SQLEnum(EstadoContrato), nullable=False)

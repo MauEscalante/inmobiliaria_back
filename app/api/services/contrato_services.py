@@ -5,12 +5,6 @@ from app.api.services.garante_services import crear_garante
 from app.database.connection import SessionLocal
 from sqlalchemy import text
 
-PERIODICIDAD_LABELS = {
-    3: "Trimestral",
-    4: "Cuatrimestral",
-    6: "Semestral",
-}
-
 # Campos que pertenecen realmente a la tabla contrato; el resto (p. ej. inquilinos)
 # se maneja aparte para no intentar setearlos como columnas.
 CONTRATO_FIELDS = {
@@ -112,7 +106,6 @@ def get_contrato_detalle(id: int):
             "deposito": contrato["deposito"],
             "tipo_ajuste": contrato["tipo_ajuste"],
             "periodicidad": contrato["periodicidad"],
-            "periodicidad_label": PERIODICIDAD_LABELS.get(contrato["periodicidad"], contrato["periodicidad"]),
             "estado": contrato["estado"],
         }
     finally:
