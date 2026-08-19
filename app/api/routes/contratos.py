@@ -12,7 +12,7 @@ async def get_contratos():
 async def contratoDetails(id: int):
     return get_contratoDetail(id)
 
-@router.post("/create-contrato")
+@router.post("/")
 async def createContrato(contrato_data: dict):
     return create_contrato(contrato_data)
 
