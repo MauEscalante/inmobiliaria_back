@@ -1,6 +1,8 @@
 from decimal import Decimal
 
-from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad
+from app.models.cliente import Cliente, ClienteTipo
+from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad, PropiedadPropietario
+from app.api.services.cliente_services import find_or_create_cliente
 from app.database.connection import SessionLocal
 from sqlalchemy import text
 
@@ -83,7 +85,24 @@ def get_inmueble_by_id(propiedad_id: int) -> dict:
         db.close()
 
 
+class PropietarioInexistenteError(Exception):
+    """El alta referencia un cliente_num que no existe."""
+
+    def __init__(self, cliente_num):
+        self.cliente_num = cliente_num
+        super().__init__(f"El propietario {cliente_num} no existe")
+
+
 def create_inmueble(propiedad_data: dict) -> dict:
+    """Crea la propiedad junto con sus propietarios en una sola transacción.
+
+    Cada propietario llega con `cliente_num` (ya existe) o con sus datos para
+    darlo de alta como Propietario. La comisión es una sola para la propiedad:
+    se guarda repetida en cada fila, que es como la lee PROPIEDAD_SELECT.
+    """
+    propietarios_data = propiedad_data.get("propietarios") or []
+    comision = propiedad_data.get("comision")
+
     db = SessionLocal()
     try:
         campos = {k: v for k, v in propiedad_data.items() if k in PROPIEDAD_FIELDS}
@@ -93,8 +112,26 @@ def create_inmueble(propiedad_data: dict) -> dict:
             estado_alquiler=EstadoAlquiler.Adeuda,
         )
         db.add(nueva_propiedad)
+        db.flush()  # asigna propiedad_id antes de asociar los propietarios
+
+        for propietario_data in propietarios_data:
+            cliente_num = propietario_data.get("cliente_num")
+
+            if cliente_num:
+                cliente = db.get(Cliente, cliente_num)
+                if not cliente:
+                    raise PropietarioInexistenteError(cliente_num)
+            else:
+                cliente = find_or_create_cliente(db, propietario_data, ClienteTipo.Propietario)
+
+            db.add(PropiedadPropietario(
+                propiedad_id=nueva_propiedad.propiedad_id,
+                cliente_num=cliente.cliente_num,
+                porcentaje=propietario_data.get("porcentaje"),
+                comision=comision,
+            ))
+
         db.commit()
-        db.refresh(nueva_propiedad)
         propiedad_id = nueva_propiedad.propiedad_id
     except Exception:
         db.rollback()
