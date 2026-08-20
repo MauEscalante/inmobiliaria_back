@@ -10,6 +10,8 @@ CREATE TABLE  propiedad  (
    propiedad_id  int NOT NULL AUTO_increment,
    direccion  varchar(25) NOT NULL,
    ambientes int ,
+   estado ENUM('Activa','Inactiva') NOT NULL DEFAULT 'Activa',
+   estado_alquiler ENUM('Abono','Adeuda') NOT NULL DEFAULT 'Adeuda',
   PRIMARY KEY ( propiedad_id )
 );
 
@@ -32,9 +34,6 @@ CREATE TABLE cliente (
    telefono  varchar(10) NOT NULL,
   PRIMARY KEY ( cliente_num )
 );
-ALTER TABLE propiedad
-ADD COLUMN estado varchar(8);
-
 CREATE TABLE  contrato  (
    contrato_id  varchar(10) NOT NULL ,
    propiedad  int DEFAULT NULL,
@@ -66,6 +65,8 @@ CREATE TABLE  contrato_inquilino  (
   CONSTRAINT  fk_contrato_inquilino_cliente  FOREIGN KEY ( cliente ) REFERENCES  cliente  ( cliente_num )
 ) ;
 
+-- comision: comisión del propietario. Es siempre la misma en todas las propiedades que tiene.
+-- porcentaje: qué parte de esa comisión le corresponde cuando la propiedad tiene más de un propietario.
 CREATE TABLE  propiedad_propietario  (
    propiedad_id  int NOT NULL AUTO_INCREMENT,
    cliente  int NOT NULL,
@@ -95,13 +96,13 @@ INSERT INTO cliente (nombre, apellido, dni, telefono) VALUES
 ('Nicolas','Alvarez','31888444','1133557799'),
 ('Valeria','Molina','29999555','1144668800');
 
-INSERT INTO propiedad (direccion) VALUES
-('Av. Mitre 100'),
-('Belgrano 250'),
-('Rivadavia 330'),
-('Sarmiento 120'),
-('San Martin 450'),
-('Italia 890');
+INSERT INTO propiedad (direccion, ambientes) VALUES
+('Av. Mitre 100', 3),
+('Belgrano 250', 2),
+('Rivadavia 330', 4),
+('Sarmiento 120', 2),
+('San Martin 450', 3),
+('Italia 890', 5);
 
 INSERT INTO propiedad_propietario
 (propiedad_id, cliente, porcentaje, comision)
@@ -223,3 +224,16 @@ VALUES
 
 use inmobiliaria_db;
 drop table IPC
+
+
+PARA MIGRAR UNA DB YA EXISTENTE (no hace falta si se recrea con el script de arriba):
+
+-- 1) normalizar antes de pasar la columna a NOT NULL
+UPDATE propiedad
+SET estado = 'Activa'
+WHERE estado IS NULL OR estado NOT IN ('Activa', 'Inactiva');
+
+-- 2) cambiar el tipo y sumar el estado de alquiler
+ALTER TABLE propiedad
+  MODIFY COLUMN estado ENUM('Activa','Inactiva') NOT NULL DEFAULT 'Activa',
+  ADD COLUMN estado_alquiler ENUM('Abono','Adeuda') NOT NULL DEFAULT 'Adeuda' AFTER ambientes;

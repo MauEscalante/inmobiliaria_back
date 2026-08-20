@@ -28,7 +28,11 @@ def get_propiedades_ajustar(mes_liquidacion: int, año_liquidacion: int) -> list
                     fecha_inicio,
                     :fecha_liquidacion
                 ),
-                periodicidad
+                CASE periodicidad
+                    WHEN 'Trimestral' THEN 3
+                    WHEN 'Cuatrimestral' THEN 4
+                    WHEN 'Semestral' THEN 6
+                END
             ) = 0
         """)
 
