@@ -8,7 +8,7 @@ USE inmobiliaria_db;
 
 CREATE TABLE  propiedad  (
    propiedad_id  int NOT NULL AUTO_increment,
-   direccion  varchar(25) NOT NULL,
+   direccion  varchar(255) NOT NULL,
    ambientes int ,
    estado ENUM('Activa','Inactiva') NOT NULL DEFAULT 'Activa',
    estado_alquiler ENUM('Abono','Adeuda') NOT NULL DEFAULT 'Adeuda',
@@ -272,3 +272,22 @@ ALTER TABLE libroDiario
       FOREIGN KEY (propiedad_id) REFERENCES propiedad(propiedad_id);
 
 CREATE INDEX idx_librodiario_fecha ON libroDiario(fecha);
+
+-- Trabajos de ajuste de recibos. Ajustar la planilla tarda mas de un minuto, asi
+-- que el POST no lo resuelve dentro del request: encola el pedido y el cliente
+-- consulta esta fila para saber como viene. Mientras haya uno en 'pendiente' o
+-- 'en_proceso' no se acepta otro, porque la planilla es un archivo compartido y
+-- dos ejecuciones simultaneas la corromperian.
+CREATE TABLE ajuste_recibo (
+  ajuste_id                   INT AUTO_INCREMENT PRIMARY KEY,
+  mes                         SMALLINT NOT NULL,
+  anio                        SMALLINT NOT NULL,
+  estado                      ENUM('pendiente','en_proceso','completado','fallido')
+                                NOT NULL DEFAULT 'pendiente',
+  contratos_ajustados         INT NULL,
+  propiedades_marcadas_adeuda INT NULL,
+  error                       VARCHAR(500) NULL,
+  creado_en                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finalizado_en               DATETIME NULL,
+  INDEX idx_ajuste_estado (estado)
+);

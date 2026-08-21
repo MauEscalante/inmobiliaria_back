@@ -1,7 +1,5 @@
-from datetime import date
-from decimal import Decimal
-
 from app.database.connection import SessionLocal
+from app.utils.helpers import serializar_fila
 from sqlalchemy import text
 
 # Nombres de mes en español para el historial que consume la pantalla de Recibos.
@@ -21,46 +19,85 @@ MOVIMIENTO_SELECT = """
     LEFT JOIN propiedad p ON p.propiedad_id = ld.propiedad_id
 """
 
-FILTRO_MES = " WHERE YEAR(ld.fecha) = :anio AND MONTH(ld.fecha) = :mes"
+# Columnas por las que se puede ordenar. Es una lista blanca: el valor del cliente
+# no se interpola nunca sin pasar por acá.
+ORDENABLES = {
+    "fecha": "ld.fecha",
+    "monto": "ld.monto",
+    "movimiento_id": "ld.movimiento_id",
+}
+
+ORDEN_POR_DEFECTO = "-fecha"
 
 
-def _serializar(row) -> dict:
-    movimiento = dict(row)
-    # Ni Decimal ni date son serializables a JSON por FastAPI sin convertirlos antes.
-    if isinstance(movimiento.get("monto"), Decimal):
-        movimiento["monto"] = float(movimiento["monto"])
-    if isinstance(movimiento.get("fecha"), date):
-        movimiento["fecha"] = movimiento["fecha"].isoformat()
-    return movimiento
+def _orden(sort: str | None) -> str:
+    """Traduce `?sort=-fecha` a un ORDER BY. El '-' adelante significa descendente.
+
+    Se desempata siempre por movimiento_id: los movimientos de un mismo día
+    comparten fecha y sin desempate el orden no sería estable entre páginas.
+    """
+    criterio = (sort or ORDEN_POR_DEFECTO).strip()
+    descendente = criterio.startswith("-")
+    campo = criterio.lstrip("-")
+
+    columna = ORDENABLES.get(campo)
+    if not columna:
+        columna = ORDENABLES["fecha"]
+        descendente = True
+
+    direccion = "DESC" if descendente else "ASC"
+    return f" ORDER BY {columna} {direccion}, ld.movimiento_id {direccion}"
 
 
-def get_movimientos(anio: int, mes: int) -> list:
-    """Movimientos del mes, del más nuevo al más viejo.
+def _filtros(anio: int | None, mes: int | None, tipos: list[str] | None) -> tuple[str, dict]:
+    condiciones = []
+    params: dict = {}
 
-    Los retiros de caja van aparte, no entran en la tabla. El desempate por
-    movimiento_id importa: los movimientos de un mismo día comparten fecha.
+    if anio:
+        condiciones.append("YEAR(ld.fecha) = :anio")
+        params["anio"] = anio
+    if mes:
+        condiciones.append("MONTH(ld.fecha) = :mes")
+        params["mes"] = mes
+
+    if tipos:
+        marcadores = []
+        for indice, valor in enumerate(tipos):
+            clave = f"tipo_{indice}"
+            marcadores.append(f":{clave}")
+            params[clave] = valor
+        condiciones.append(f"ld.tipo IN ({', '.join(marcadores)})")
+
+    where = f" WHERE {' AND '.join(condiciones)}" if condiciones else ""
+    return where, params
+
+
+def get_movimientos(
+    anio: int | None,
+    mes: int | None,
+    tipos: list[str] | None,
+    sort: str | None,
+    limit: int,
+    offset: int,
+) -> tuple[list, int]:
+    """Página de movimientos más el total que matchea el filtro.
+
+    Unifica los dos endpoints viejos: el listado del mes y el de retiros, que era
+    este mismo query con `tipo = 'RETIRO'` fijo en la URL.
     """
     db = SessionLocal()
     try:
-        query = text(
-            MOVIMIENTO_SELECT + FILTRO_MES +
-            " AND ld.tipo <> 'RETIRO' ORDER BY ld.fecha DESC, ld.movimiento_id DESC"
-        )
-        filas = db.execute(query, {"anio": anio, "mes": mes}).mappings().all()
-        return [_serializar(row) for row in filas]
-    finally:
-        db.close()
+        where, params = _filtros(anio, mes, tipos)
 
+        total = db.execute(
+            text(f"SELECT COUNT(*) FROM libroDiario ld{where}"), params
+        ).scalar() or 0
 
-def get_retiros(anio: int, mes: int) -> list:
-    db = SessionLocal()
-    try:
         query = text(
-            MOVIMIENTO_SELECT + FILTRO_MES +
-            " AND ld.tipo = 'RETIRO' ORDER BY ld.fecha, ld.movimiento_id"
+            MOVIMIENTO_SELECT + where + _orden(sort) + " LIMIT :_limit OFFSET :_offset"
         )
-        filas = db.execute(query, {"anio": anio, "mes": mes}).mappings().all()
-        return [_serializar(row) for row in filas]
+        filas = db.execute(query, {**params, "_limit": limit, "_offset": offset}).mappings().all()
+        return [serializar_fila(fila) for fila in filas], total
     finally:
         db.close()
 
@@ -139,7 +176,7 @@ def get_movimiento_by_id(movimiento_id: int) -> dict:
     try:
         query = text(MOVIMIENTO_SELECT + " WHERE ld.movimiento_id = :movimiento_id")
         fila = db.execute(query, {"movimiento_id": movimiento_id}).mappings().first()
-        return _serializar(fila) if fila else None
+        return serializar_fila(fila) if fila else None
     finally:
         db.close()
 
@@ -160,26 +197,38 @@ def delete_movimiento(movimiento_id: int) -> bool:
         db.close()
 
 
-def get_historial_mensual() -> list:
+def get_historial_mensual(limit: int, offset: int) -> tuple[list, int]:
     """Total de ingresos por mes. Es lo que muestra la card de la pantalla de Recibos."""
     db = SessionLocal()
     try:
+        total = db.execute(
+            text("""
+                SELECT COUNT(*) FROM (
+                  SELECT 1 FROM libroDiario
+                  WHERE tipo = 'INGRESO'
+                  GROUP BY YEAR(fecha), MONTH(fecha)
+                ) AS periodos
+            """)
+        ).scalar() or 0
+
         query = text("""
             SELECT YEAR(fecha) AS anio, MONTH(fecha) AS mes, SUM(monto) AS total
             FROM libroDiario
             WHERE tipo = 'INGRESO'
             GROUP BY YEAR(fecha), MONTH(fecha)
             ORDER BY anio DESC, mes DESC
+            LIMIT :_limit OFFSET :_offset
         """)
-        return [
+        filas = [
             {
                 "id": f"{row['anio']}-{row['mes']:02d}",
                 "mes": MESES[row["mes"] - 1],
                 "anio": str(row["anio"]),
                 "total": float(row["total"]),
             }
-            for row in db.execute(query).mappings().all()
+            for row in db.execute(query, {"_limit": limit, "_offset": offset}).mappings().all()
         ]
+        return filas, total
     finally:
         db.close()
 

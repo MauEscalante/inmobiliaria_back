@@ -1,50 +1,50 @@
 from datetime import date
+from decimal import Decimal
 
-from fastapi import HTTPException
-
+from app.api.errors import raise_not_found, raise_unprocessable
 from app.api.services.libro_diario_service import (
-    get_movimientos,
-    get_retiros,
-    get_resumen_caja,
-    get_historial_mensual,
     create_movimiento,
     delete_movimiento,
+    get_historial_mensual,
     get_movimiento_by_id,
+    get_movimientos,
+    get_resumen_caja,
 )
 from app.api.services.propiedades_services import get_inmueble_by_id
-from app.models.libro_diario import CuentaTransferencia, TipoMovimiento
+from app.models.libro_diario import TipoMovimiento
 
 # Ingresos y depósitos son plata de una propiedad, por eso hay que indicar cuál.
-TIPOS_CON_PROPIEDAD = ("INGRESO", "DEPOSITO")
+TIPOS_CON_PROPIEDAD = (TipoMovimiento.INGRESO.value, TipoMovimiento.DEPOSITO.value)
 
 # Lo que sale de la caja sale en efectivo, así que no puede salir más de lo que hay.
-TIPOS_QUE_SACAN_EFECTIVO = ("EGRESO", "RETIRO")
+TIPOS_QUE_SACAN_EFECTIVO = (TipoMovimiento.EGRESO.value, TipoMovimiento.RETIRO.value)
 
 
-def _validar_mes(anio: int, mes: int):
-    if mes < 1 or mes > 12:
-        raise HTTPException(status_code=400, detail="El mes debe estar entre 1 y 12")
-    if anio < 1900:
-        raise HTTPException(status_code=400, detail="Año inválido")
+def get_libro_diario(
+    anio: int | None,
+    mes: int | None,
+    tipos: list[str] | None,
+    sort: str | None,
+    limit: int,
+    offset: int,
+):
+    """Los rangos de anio y mes los valida Query en la ruta."""
+    return get_movimientos(anio, mes, tipos, sort, limit, offset)
 
 
-def get_libro_diario(anio: int, mes: int):
-    _validar_mes(anio, mes)
-    return get_movimientos(anio, mes)
-
-
-def get_retiros_caja(anio: int, mes: int):
-    _validar_mes(anio, mes)
-    return get_retiros(anio, mes)
+def get_movimiento(movimiento_id: int):
+    movimiento = get_movimiento_by_id(movimiento_id)
+    if not movimiento:
+        raise_not_found("Movimiento", movimiento_id)
+    return movimiento
 
 
 def get_estado_caja(anio: int, mes: int):
-    _validar_mes(anio, mes)
     return get_resumen_caja(anio, mes)
 
 
-def get_historial():
-    return get_historial_mensual()
+def get_historial(limit: int, offset: int):
+    return get_historial_mensual(limit, offset)
 
 
 def _armar_concepto(propiedad: dict, piso: str, depto: str) -> str:
@@ -61,19 +61,14 @@ def _validar_periodo(fecha_movimiento: date):
     """Los meses que ya pasaron quedan cerrados: solo se registra en el mes en curso."""
     hoy = date.today()
     if (fecha_movimiento.year, fecha_movimiento.month) < (hoy.year, hoy.month):
-        raise HTTPException(
-            status_code=400,
-            detail="No se pueden registrar movimientos en meses anteriores al actual",
+        raise_unprocessable(
+            "No se pueden registrar movimientos en meses anteriores al actual",
+            field="fecha",
+            code="periodo_cerrado",
         )
 
 
-def _formato_pesos(monto: float) -> str:
-    """1234.5 -> "$ 1.234,50". El formato de Python es al revés del nuestro."""
-    entero, decimales = f"{monto:,.2f}".split(".")
-    return f"$ {entero.replace(',', '.')},{decimales}"
-
-
-def _validar_saldo_caja(tipo: str, fecha_movimiento: date, monto: float):
+def _validar_saldo_caja(tipo: str, fecha_movimiento: date, monto: Decimal):
     """La caja no puede quedar en negativo: no se saca más efectivo del que hay.
 
     Se mide contra el mes del movimiento, no contra el que el usuario esté mirando
@@ -85,40 +80,25 @@ def _validar_saldo_caja(tipo: str, fecha_movimiento: date, monto: float):
     disponible = get_resumen_caja(fecha_movimiento.year, fecha_movimiento.month)["total_caja"]
     # Redondeo a centavos: los montos son DECIMAL(12,2) y comparar floats pelados
     # rechazaría un retiro por el total exacto de la caja.
-    if round(monto - disponible, 2) > 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No hay suficiente efectivo en caja: quedan {_formato_pesos(disponible)}",
+    if round(float(monto) - disponible, 2) > 0:
+        # El monto disponible va como número: formatearlo en pesos acá dejaba una
+        # string de presentación adentro del error, que el cliente no puede usar.
+        raise_unprocessable(
+            f"No hay suficiente efectivo en caja: quedan {disponible}",
+            field="monto",
+            code="saldo_insuficiente",
         )
 
 
 def create_new_movimiento(movimiento_data: dict):
-    tipo = movimiento_data.get("tipo")
-    if tipo not in [t.value for t in TipoMovimiento]:
-        raise HTTPException(status_code=400, detail="El tipo de movimiento es inválido")
+    """La forma del body (tipo válido, monto > 0, cuenta en depósitos, concepto en
+    egresos) ya la valida MovimientoCreate. Acá quedan solo las reglas que necesitan
+    mirar la base o el reloj."""
+    tipo = movimiento_data["tipo"]
+    fecha_movimiento = movimiento_data["fecha"]
+    monto = movimiento_data["monto"]
 
-    fecha = movimiento_data.get("fecha")
-    if not fecha:
-        raise HTTPException(status_code=400, detail="La fecha es obligatoria")
-    try:
-        fecha_movimiento = date.fromisoformat(str(fecha))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="La fecha es inválida")
     _validar_periodo(fecha_movimiento)
-
-    try:
-        monto = float(movimiento_data.get("monto"))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="El monto es obligatorio")
-    if monto <= 0:
-        raise HTTPException(status_code=400, detail="El monto debe ser mayor a cero")
-
-    cuenta = movimiento_data.get("cuenta") or None
-    if cuenta and cuenta not in [c.value for c in CuentaTransferencia]:
-        raise HTTPException(status_code=400, detail="La cuenta debe ser Kike o Dai")
-    # En un depósito la cuenta es el dato que dice a dónde se transfirió la plata.
-    if tipo == "DEPOSITO" and not cuenta:
-        raise HTTPException(status_code=400, detail="Indicá a qué cuenta se transfirió el depósito")
 
     piso = (movimiento_data.get("piso") or "").strip() or None
     depto = (movimiento_data.get("depto") or "").strip() or None
@@ -126,16 +106,18 @@ def create_new_movimiento(movimiento_data: dict):
     concepto = (movimiento_data.get("concepto") or "").strip()
 
     if tipo in TIPOS_CON_PROPIEDAD:
-        if not propiedad_id:
-            raise HTTPException(status_code=400, detail="Indicá la propiedad")
         propiedad = get_inmueble_by_id(propiedad_id)
         if not propiedad:
-            raise HTTPException(status_code=404, detail="Propiedad no encontrada")
+            # Una referencia inválida dentro del body es 422: el 404 diría que la
+            # colección de movimientos no existe.
+            raise_unprocessable(
+                f"No existe la propiedad {propiedad_id}",
+                field="propiedad_id",
+                code="referencia_inexistente",
+            )
         concepto = _armar_concepto(propiedad, piso, depto)
     else:
         # Los egresos y retiros no tienen propiedad: el concepto lo escribe el usuario.
-        if not concepto:
-            raise HTTPException(status_code=400, detail="El concepto es obligatorio")
         propiedad_id = None
         piso = None
         depto = None
@@ -143,19 +125,18 @@ def create_new_movimiento(movimiento_data: dict):
     _validar_saldo_caja(tipo, fecha_movimiento, monto)
 
     return create_movimiento({
-        "fecha": fecha,
+        "fecha": fecha_movimiento,
         "propiedad_id": propiedad_id,
         "piso": piso,
         "depto": depto,
         "concepto": concepto,
         "monto": monto,
         "tipo": tipo,
-        "cuenta": cuenta,
+        "cuenta": movimiento_data.get("cuenta"),
     })
 
 
-def eliminar_movimiento(movimiento_id: int):
+def eliminar_movimiento(movimiento_id: int) -> None:
     if not get_movimiento_by_id(movimiento_id):
-        raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+        raise_not_found("Movimiento", movimiento_id)
     delete_movimiento(movimiento_id)
-    return {"movimiento_id": movimiento_id}

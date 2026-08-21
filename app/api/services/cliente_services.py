@@ -1,7 +1,6 @@
-from decimal import Decimal
-
 from app.models.cliente import Cliente, ClienteTipo
 from app.database.connection import SessionLocal
+from app.utils.helpers import serializar_fila
 from sqlalchemy import text
 
 # Campos que la edición puede tocar. El tipo no está: se deriva de las relaciones.
@@ -10,6 +9,8 @@ CLIENTE_FIELDS = ("nombre", "apellido", "dni", "telefono", "email", "direccion",
 # El tipo del cliente se deriva de dónde aparece: si tiene propiedades es Propietario,
 # si tiene contratos es Inquilino, y puede ser las dos cosas a la vez. La columna
 # cliente.tipo solo se usa como respaldo para clientes que todavía no tienen relaciones.
+# La comisión se trae acá para que el selector de propietarios pueda usar esta misma
+# colección filtrada, en vez del viejo endpoint /propietarios.
 CLIENTE_SELECT = """
     SELECT
       c.cliente_num, c.nombre, c.apellido, c.dni, c.telefono,
@@ -19,7 +20,10 @@ CLIENTE_SELECT = """
         WHEN pp.n > 0 THEN 'Propietario'
         WHEN ci.n > 0 THEN 'Inquilino'
         ELSE c.tipo
-      END AS tipo
+      END AS tipo,
+      (SELECT MAX(ppc.comision)
+         FROM propiedad_propietario ppc
+        WHERE ppc.cliente = c.cliente_num) AS comision
     FROM cliente c
     LEFT JOIN (SELECT cliente, COUNT(*) n FROM propiedad_propietario GROUP BY cliente) pp
            ON pp.cliente = c.cliente_num
@@ -27,13 +31,38 @@ CLIENTE_SELECT = """
            ON ci.cliente = c.cliente_num
 """
 
+# Un cliente que es las dos cosas cuenta como propietario y como inquilino, así que
+# los filtros por tipo incluyen 'Ambos'. Esto mantiene el resultado del viejo
+# GET /propietarios, que salía de un JOIN contra propiedad_propietario.
+TIPOS_EQUIVALENTES = {
+    "Propietario": ("Propietario", "Ambos"),
+    "Inquilino": ("Inquilino", "Ambos"),
+    "Ambos": ("Ambos",),
+}
 
-def _serializar(row) -> dict:
-    cliente = dict(row)
-    # Decimal no es serializable a JSON por FastAPI sin convertirlo antes.
-    if isinstance(cliente.get("comision"), Decimal):
-        cliente["comision"] = float(cliente["comision"])
-    return cliente
+
+def _filtros(tipo: str | None, q: str | None) -> tuple[str, dict]:
+    """Arma el WHERE de la colección sobre la subconsulta derivada."""
+    condiciones = []
+    params: dict = {}
+
+    if tipo:
+        equivalentes = TIPOS_EQUIVALENTES.get(tipo, (tipo,))
+        marcadores = []
+        for indice, valor in enumerate(equivalentes):
+            clave = f"tipo_{indice}"
+            marcadores.append(f":{clave}")
+            params[clave] = valor
+        condiciones.append(f"cl.tipo IN ({', '.join(marcadores)})")
+
+    if q:
+        condiciones.append(
+            "(cl.nombre LIKE :q OR cl.apellido LIKE :q OR cl.dni LIKE :q OR cl.email LIKE :q)"
+        )
+        params["q"] = f"%{q}%"
+
+    where = f" WHERE {' AND '.join(condiciones)}" if condiciones else ""
+    return where, params
 
 
 def find_or_create_cliente(db, cliente_data: dict, tipo: ClienteTipo) -> Cliente:
@@ -63,11 +92,24 @@ def find_or_create_cliente(db, cliente_data: dict, tipo: ClienteTipo) -> Cliente
     return cliente
 
 
-def get_clientes() -> list:
+def get_clientes(tipo: str | None, q: str | None, limit: int, offset: int) -> tuple[list, int]:
+    """Página de clientes más el total que matchea el filtro."""
     db = SessionLocal()
     try:
-        query = text(CLIENTE_SELECT + " ORDER BY c.apellido, c.nombre")
-        return [_serializar(row) for row in db.execute(query).mappings().all()]
+        where, params = _filtros(tipo, q)
+        derivada = f"({CLIENTE_SELECT}) AS cl"
+
+        total = db.execute(
+            text(f"SELECT COUNT(*) FROM {derivada}{where}"), params
+        ).scalar() or 0
+
+        query = text(
+            f"SELECT * FROM {derivada}{where}"
+            " ORDER BY cl.apellido, cl.nombre"
+            " LIMIT :_limit OFFSET :_offset"
+        )
+        filas = db.execute(query, {**params, "_limit": limit, "_offset": offset}).mappings().all()
+        return [serializar_fila(fila) for fila in filas], total
     finally:
         db.close()
 
@@ -77,29 +119,13 @@ def get_cliente_by_id(cliente_id: int) -> dict:
     try:
         query = text(CLIENTE_SELECT + " WHERE c.cliente_num = :cliente_id")
         cliente = db.execute(query, {"cliente_id": cliente_id}).mappings().first()
-        return _serializar(cliente) if cliente else None
-    finally:
-        db.close()
-
-
-def get_propietarios() -> list:
-    """Clientes que ya son propietarios de alguna propiedad, para el selector del alta."""
-    db = SessionLocal()
-    try:
-        query = text("""
-            SELECT c.cliente_num, c.nombre, c.apellido, c.dni, MAX(pp.comision) AS comision
-            FROM cliente c
-            JOIN propiedad_propietario pp ON pp.cliente = c.cliente_num
-            GROUP BY c.cliente_num, c.nombre, c.apellido, c.dni
-            ORDER BY c.apellido, c.nombre
-        """)
-        return [_serializar(row) for row in db.execute(query).mappings().all()]
+        return serializar_fila(cliente) if cliente else None
     finally:
         db.close()
 
 
 def buscar_duplicado(cliente_id: int, dni: str, email: str) -> str:
-    """Devuelve 'DNI' o 'email' si otro cliente ya usa ese valor, o None.
+    """Devuelve 'dni' o 'email' si otro cliente ya usa ese valor, o None.
 
     El modelo declara ambos como UNIQUE pero la tabla no tiene esos índices, así que
     la unicidad se valida acá. Importa: find_or_create_cliente deduplica por DNI, y
@@ -113,7 +139,7 @@ def buscar_duplicado(cliente_id: int, dni: str, email: str) -> str:
                 {"dni": dni, "cliente_id": cliente_id},
             ).first()
             if existe:
-                return "DNI"
+                return "dni"
 
         if email:
             existe = db.execute(
@@ -129,7 +155,7 @@ def buscar_duplicado(cliente_id: int, dni: str, email: str) -> str:
 
 
 def update_cliente(cliente_id: int, cliente_data: dict) -> dict:
-    """Corrige los datos de un cliente. El alta sigue siendo automática, esto solo edita."""
+    """Reemplazo total (PUT). El alta sigue siendo automática, esto solo edita."""
     db = SessionLocal()
     try:
         query = text("""
@@ -157,15 +183,21 @@ def update_cliente(cliente_id: int, cliente_data: dict) -> dict:
     return get_cliente_by_id(cliente_id)
 
 
-def update_email(cliente_id: int, email: str) -> None:
+def patch_cliente(cliente_id: int, campos: dict) -> dict:
+    """Actualización parcial: solo escribe las columnas presentes en `campos`.
+
+    Reemplaza a update_email y update_celular, que además de mandar el valor por
+    query string no verificaban que el cliente existiera.
+    """
+    editables = {campo: valor for campo, valor in campos.items() if campo in CLIENTE_FIELDS}
+    if not editables:
+        return get_cliente_by_id(cliente_id)
+
     db = SessionLocal()
     try:
-        query = text("""
-        UPDATE cliente
-        SET email= :email
-        WHERE cliente_num= :cliente_id
-        """)
-        db.execute(query, {"email": email, "cliente_id": cliente_id})
+        asignaciones = ", ".join(f"{campo} = :{campo}" for campo in editables)
+        query = text(f"UPDATE cliente SET {asignaciones} WHERE cliente_num = :cliente_id")
+        db.execute(query, {**editables, "cliente_id": cliente_id})
         db.commit()
     except Exception:
         db.rollback()
@@ -173,19 +205,4 @@ def update_email(cliente_id: int, email: str) -> None:
     finally:
         db.close()
 
-
-def update_celular(cliente_id: int, telefono: str) -> None:
-    db = SessionLocal()
-    try:
-        query = text("""
-        UPDATE cliente
-        SET telefono= :telefono
-        WHERE cliente_num= :cliente_id
-        """)
-        db.execute(query, {"telefono": telefono, "cliente_id": cliente_id})
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    return get_cliente_by_id(cliente_id)
