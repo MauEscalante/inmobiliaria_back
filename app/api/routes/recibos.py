@@ -26,3 +26,12 @@ def ajustar_recibos(mes_liquidacion: int, anio_liquidacion: int) -> list:
         return recibos_ajustar
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ajustar/{mes_liquidacion}/{anio_liquidacion}")
+def generar_recibos(mes_liquidacion: int, anio_liquidacion: int):
+    try:
+        actualizar_recibos(mes_liquidacion, anio_liquidacion)
+        return {"mes": mes_liquidacion, "anio": anio_liquidacion}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

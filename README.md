@@ -15,15 +15,24 @@ CREATE TABLE  propiedad  (
   PRIMARY KEY ( propiedad_id )
 );
 
+-- concepto se guarda desnormalizado ("Cotagaita 786 3° B") para que la fila siga
+-- siendo legible aunque la propiedad cambie de dirección.
+-- piso y depto son del movimiento: aclaran a qué unidad corresponde el pago.
+-- cuenta indica a qué cuenta se transfirió; es obligatoria en los DEPOSITO.
 create table libroDiario(
 	movimiento_id INT NOT NULL AUTO_INCREMENT,
     fecha DATE NOT NULL,
+    propiedad_id INT NULL,
+    piso VARCHAR(10) NULL,
+    depto VARCHAR(10) NULL,
     concepto VARCHAR(150) NOT NULL,
     monto DECIMAL(12,2) NOT NULL,
-    tipo ENUM('INGRESO', 'EGRESO') NOT NULL,
+    tipo ENUM('INGRESO', 'DEPOSITO', 'EGRESO', 'RETIRO') NOT NULL,
+    cuenta ENUM('Kike', 'Dai') NULL,
 
-    PRIMARY KEY (movimiento_id)
-    
+    PRIMARY KEY (movimiento_id),
+    KEY idx_librodiario_fecha (fecha),
+    CONSTRAINT fk_librodiario_propiedad FOREIGN KEY (propiedad_id) REFERENCES propiedad(propiedad_id)
 );
 
 CREATE TABLE cliente (
@@ -237,3 +246,15 @@ WHERE estado IS NULL OR estado NOT IN ('Activa', 'Inactiva');
 ALTER TABLE propiedad
   MODIFY COLUMN estado ENUM('Activa','Inactiva') NOT NULL DEFAULT 'Activa',
   ADD COLUMN estado_alquiler ENUM('Abono','Adeuda') NOT NULL DEFAULT 'Adeuda' AFTER ambientes;
+
+-- 3) libro diario: depósitos y retiros de caja, propiedad del movimiento y cuenta destino
+ALTER TABLE libroDiario
+  MODIFY COLUMN tipo ENUM('INGRESO','DEPOSITO','EGRESO','RETIRO') NOT NULL,
+  ADD COLUMN propiedad_id INT NULL AFTER fecha,
+  ADD COLUMN piso  VARCHAR(10) NULL AFTER propiedad_id,
+  ADD COLUMN depto VARCHAR(10) NULL AFTER piso,
+  ADD COLUMN cuenta ENUM('Kike','Dai') NULL AFTER tipo,
+  ADD CONSTRAINT fk_librodiario_propiedad
+      FOREIGN KEY (propiedad_id) REFERENCES propiedad(propiedad_id);
+
+CREATE INDEX idx_librodiario_fecha ON libroDiario(fecha);
