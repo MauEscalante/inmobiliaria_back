@@ -35,14 +35,28 @@ create table libroDiario(
     CONSTRAINT fk_librodiario_propiedad FOREIGN KEY (propiedad_id) REFERENCES propiedad(propiedad_id)
 );
 
+-- Los clientes no se dan de alta a mano: se crean solos al registrar un contrato
+-- (inquilino) o una propiedad (propietario), deduplicando por DNI.
+-- `tipo` es solo un respaldo: en las consultas el rol se deriva de contrato_inquilino
+-- y propiedad_propietario, porque un cliente puede ser las dos cosas a la vez.
 CREATE TABLE cliente (
   cliente_num int NOT NULL AUTO_INCREMENT,
    nombre  varchar(15) NOT NULL,
    apellido  varchar(15) NOT NULL,
    dni  varchar(9) NOT NULL,
    telefono  varchar(10) NOT NULL,
+   tipo  varchar(20) DEFAULT NULL,
+   email  varchar(100) DEFAULT NULL,
+   direccion  varchar(255) DEFAULT NULL,
+   cuil  varchar(15) DEFAULT NULL,
+   nacionalidad  varchar(50) DEFAULT NULL,
   PRIMARY KEY ( cliente_num )
 );
+-- Pendiente: la base todavía no tiene estos índices, pero el modelo los declara y
+-- find_or_create_cliente depende de que el DNI sea único. Mientras no estén, la
+-- unicidad se valida en la aplicación (cliente_services.buscar_duplicado).
+-- ALTER TABLE cliente ADD UNIQUE KEY uq_cliente_dni (dni);
+-- ALTER TABLE cliente ADD UNIQUE KEY uq_cliente_email (email);
 CREATE TABLE  contrato  (
    contrato_id  varchar(10) NOT NULL ,
    propiedad  int DEFAULT NULL,

@@ -1,6 +1,8 @@
 from decimal import Decimal
 
-from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad
+from app.api.services.cliente_services import find_or_create_cliente
+from app.models.cliente import ClienteTipo
+from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad, PropiedadPropietario
 from app.database.connection import SessionLocal
 from sqlalchemy import text
 
@@ -84,6 +86,12 @@ def get_inmueble_by_id(propiedad_id: int) -> dict:
 
 
 def create_inmueble(propiedad_data: dict) -> dict:
+    """Crea la propiedad y, en la misma transacción, sus propietarios.
+
+    Los propietarios que no existen se dan de alta como clientes acá: es la única
+    forma de que un propietario entre al sistema, igual que el inquilino entra al
+    crear el contrato.
+    """
     db = SessionLocal()
     try:
         campos = {k: v for k, v in propiedad_data.items() if k in PROPIEDAD_FIELDS}
@@ -93,9 +101,26 @@ def create_inmueble(propiedad_data: dict) -> dict:
             estado_alquiler=EstadoAlquiler.Adeuda,
         )
         db.add(nueva_propiedad)
-        db.commit()
-        db.refresh(nueva_propiedad)
+        db.flush()  # asigna propiedad_id antes del commit
         propiedad_id = nueva_propiedad.propiedad_id
+
+        # La comisión es de la propiedad pero se guarda en cada fila de propietario,
+        # que es de donde la lee PROPIEDAD_SELECT.
+        comision = propiedad_data.get("comision")
+
+        for propietario_data in propiedad_data.get("propietarios") or []:
+            cliente_num = propietario_data.get("cliente_num")
+            if not cliente_num:
+                cliente_num = find_or_create_cliente(db, propietario_data, ClienteTipo.Propietario).cliente_num
+
+            db.add(PropiedadPropietario(
+                propiedad_id=propiedad_id,
+                cliente_num=cliente_num,
+                porcentaje=propietario_data.get("porcentaje") or 100,
+                comision=comision,
+            ))
+
+        db.commit()
     except Exception:
         db.rollback()
         raise

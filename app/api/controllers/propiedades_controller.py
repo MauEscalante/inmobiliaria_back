@@ -22,6 +22,20 @@ def get_propiedad_by_id(id: int):
 def create_new_propiedad(propiedad_data: dict):
     if not propiedad_data.get("direccion"):
         raise HTTPException(status_code=400, detail="La dirección es obligatoria")
+
+    propietarios = propiedad_data.get("propietarios") or []
+    if not propietarios:
+        raise HTTPException(status_code=400, detail="La propiedad necesita al menos un propietario")
+
+    for propietario in propietarios:
+        # O es un propietario ya existente, o vienen los datos para darlo de alta.
+        if not propietario.get("cliente_num") and not (propietario.get("dni") or "").strip():
+            raise HTTPException(status_code=400, detail="Cada propietario nuevo necesita DNI")
+
+    suma = sum(float(propietario.get("porcentaje") or 0) for propietario in propietarios)
+    if abs(suma - 100) > 0.01:
+        raise HTTPException(status_code=400, detail=f"Los porcentajes deben sumar 100%, suman {suma}%")
+
     return create_inmueble(propiedad_data)
 
 def update_propiedad(id: int, propiedad_data: dict):
