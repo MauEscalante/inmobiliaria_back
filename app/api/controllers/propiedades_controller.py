@@ -1,113 +1,69 @@
-from fastapi import HTTPException
-
+from app.api.errors import raise_conflict, raise_not_found, raise_unprocessable
 from app.api.services.propiedades_services import (
-    get_inmuebles,
-    get_inmueble_by_id,
-    create_inmueble,
-    update_inmueble,
-    delete_inmueble,
-    update_estado_by_id,
-    update_direccion_by_id,
     PropietarioInexistenteError,
+    create_inmueble,
+    delete_inmueble,
+    get_inmueble_by_id,
+    get_inmuebles,
+    get_propietarios_de_propiedad,
+    patch_inmueble,
+    update_inmueble,
 )
 
-# Los porcentajes se guardan como DECIMAL(5,2), así que se compara la suma con
-# una tolerancia en lugar de exigir igualdad exacta.
-TOLERANCIA_PORCENTAJE = 0.01
+
+def get_all_propiedades(
+    estado: str | None, estado_alquiler: str | None, q: str | None, limit: int, offset: int
+):
+    return get_inmuebles(estado, estado_alquiler, q, limit, offset)
 
 
-def _validar_propietarios(propiedad_data: dict) -> list:
-    """Valida los propietarios del alta y devuelve la lista con el porcentaje resuelto.
-
-    Con un solo propietario el porcentaje es opcional y se asume 100; con varios
-    hay que indicarlo y la suma debe dar 100.
-    """
-    propietarios = propiedad_data.get("propietarios") or []
-
-    if not propietarios:
-        raise HTTPException(status_code=400, detail="La propiedad necesita al menos un propietario")
-
-    try:
-        comision = float(propiedad_data.get("comision"))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="La comisión debe ser un número")
-
-    if comision < 0:
-        raise HTTPException(status_code=400, detail="La comisión no puede ser negativa")
-
-    resueltos = []
-
-    for propietario in propietarios:
-        if not propietario.get("cliente_num"):
-            faltantes = [campo for campo in ("nombre", "apellido", "dni") if not propietario.get(campo)]
-            if faltantes:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Al propietario nuevo le faltan datos: {', '.join(faltantes)}",
-                )
-
-        if len(propietarios) == 1:
-            porcentaje = 100.0
-        else:
-            try:
-                porcentaje = float(propietario.get("porcentaje"))
-            except (TypeError, ValueError):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Cuando hay varios propietarios cada uno necesita su porcentaje",
-                )
-
-            if porcentaje <= 0:
-                raise HTTPException(status_code=400, detail="Los porcentajes deben ser mayores a 0")
-
-        resueltos.append({**propietario, "porcentaje": porcentaje})
-
-    suma = sum(propietario["porcentaje"] for propietario in resueltos)
-
-    if abs(suma - 100) > TOLERANCIA_PORCENTAJE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Los porcentajes deben sumar 100%. Actualmente suman {suma:g}%",
-        )
-
-    return resueltos
-
-def get_all_propiedades():
-    return get_inmuebles()
-
-def get_propiedad_by_id(id: int):
-    propiedad = get_inmueble_by_id(id)
+def get_propiedad_by_id(propiedad_id: int):
+    propiedad = get_inmueble_by_id(propiedad_id)
     if not propiedad:
-        raise HTTPException(status_code=404, detail="Propiedad no encontrada")
+        raise_not_found("Propiedad", propiedad_id, femenino=True)
     return propiedad
 
+
+def get_propietarios(propiedad_id: int):
+    """Sub-recurso: la asociación propiedad-propietario, con su porcentaje."""
+    if not get_inmueble_by_id(propiedad_id):
+        raise_not_found("Propiedad", propiedad_id, femenino=True)
+    return get_propietarios_de_propiedad(propiedad_id)
+
+
 def create_new_propiedad(propiedad_data: dict):
-    if not propiedad_data.get("direccion"):
-        raise HTTPException(status_code=400, detail="La dirección es obligatoria")
+    """La dirección obligatoria, el mínimo de propietarios y la suma de porcentajes
+    ya los valida PropiedadCreate, así que acá no se repiten.
 
-    propietarios = _validar_propietarios(propiedad_data)
-
+    Lo que Pydantic no puede ver es si el `cliente_num` de un propietario existe:
+    eso es un dato del body inválido, o sea 422, no un 404 (la colección
+    /propiedades sí existe).
+    """
     try:
-        return create_inmueble({**propiedad_data, "propietarios": propietarios})
+        return create_inmueble(propiedad_data)
     except PropietarioInexistenteError as error:
-        raise HTTPException(status_code=404, detail=str(error))
+        raise_unprocessable(str(error), field="propietarios", code="referencia_inexistente")
 
-def update_propiedad(id: int, propiedad_data: dict):
-    if not get_inmueble_by_id(id):
-        raise HTTPException(status_code=404, detail="Propiedad no encontrada")
-    if not propiedad_data.get("direccion"):
-        raise HTTPException(status_code=400, detail="La dirección es obligatoria")
-    return update_inmueble(id, propiedad_data)
 
-def delete_propiedad(id: int):
-    if not get_inmueble_by_id(id):
-        raise HTTPException(status_code=404, detail="Propiedad no encontrada")
-    if not delete_inmueble(id):
-        raise HTTPException(status_code=409, detail="No se puede eliminar: la propiedad tiene contratos asociados")
-    return {"propiedad_id": id}
+def update_propiedad(propiedad_id: int, propiedad_data: dict):
+    if not get_inmueble_by_id(propiedad_id):
+        raise_not_found("Propiedad", propiedad_id, femenino=True)
+    return update_inmueble(propiedad_id, propiedad_data)
 
-def update_direccion(id: int, direccion: str):
-    return update_direccion_by_id(id, direccion)
 
-def update_estado(id: int, estado: str):
-    return update_estado_by_id(id, estado)
+def patch_propiedad(propiedad_id: int, campos: dict):
+    """Reemplaza a /update/direccion/{id} y /update/estado/{id}, que mandaban el
+    valor por query string y no verificaban que la propiedad existiera."""
+    if not get_inmueble_by_id(propiedad_id):
+        raise_not_found("Propiedad", propiedad_id, femenino=True)
+    return patch_inmueble(propiedad_id, campos)
+
+
+def delete_propiedad(propiedad_id: int) -> None:
+    if not get_inmueble_by_id(propiedad_id):
+        raise_not_found("Propiedad", propiedad_id, femenino=True)
+    if not delete_inmueble(propiedad_id):
+        raise_conflict(
+            "No se puede eliminar: la propiedad tiene contratos asociados",
+            code="tiene_contratos",
+        )

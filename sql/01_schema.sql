@@ -219,14 +219,77 @@ CREATE TABLE valor_historico (
 -- El nombre va en camelCase a propósito: el front pega a GET /libroDiario/.
 -- En Windows MySQL normaliza el nombre a minúsculas (lower_case_table_names=1)
 -- y lo resuelve sin distinguir mayúsculas, así que las queries funcionan igual.
+--
+-- `propiedad_id`, `piso` y `depto` son del movimiento, no de la propiedad:
+-- aclaran a qué unidad corresponde el pago. Solo los ingresos y depósitos
+-- apuntan a una propiedad. `concepto` va desnormalizado ("Cotagaita 786 3° B")
+-- para que la fila siga siendo legible aunque la propiedad cambie de dirección.
+-- `cuenta` indica a qué cuenta se transfirió: es obligatoria en los DEPOSITO.
 -- -----------------------------------------------------------------------------
 CREATE TABLE libroDiario (
     movimiento_id INT           NOT NULL AUTO_INCREMENT,
     fecha         DATE          NOT NULL,
+    propiedad_id  INT           NULL,
+    piso          VARCHAR(10)   NULL,
+    depto         VARCHAR(10)   NULL,
     concepto      VARCHAR(150)  NOT NULL,
     monto         DECIMAL(12,2) NOT NULL,
-    tipo          ENUM('INGRESO', 'EGRESO') NOT NULL,
+    tipo          ENUM('INGRESO', 'DEPOSITO', 'EGRESO', 'RETIRO') NOT NULL,
+    cuenta        ENUM('Kike', 'Dai') NULL,
 
     PRIMARY KEY (movimiento_id),
-    KEY idx_librodiario_fecha (fecha)
+    KEY idx_librodiario_fecha (fecha),
+    CONSTRAINT fk_librodiario_propiedad
+        FOREIGN KEY (propiedad_id) REFERENCES propiedad (propiedad_id)
+) ENGINE=InnoDB;
+
+
+-- -----------------------------------------------------------------------------
+-- evento
+-- -----------------------------------------------------------------------------
+-- Bitácora de altas, para el panel de actividad reciente. Ni `contrato` ni
+-- `cliente` guardan fecha de creación, así que sin esta tabla solo se sabe en
+-- qué orden se cargaron las cosas, nunca cuándo. Cada fila se escribe en la
+-- misma transacción que el alta que la origina (evento_service.registrar).
+--
+-- `tipo` es VARCHAR y no ENUM a propósito: sumar un tipo de evento no debe
+-- requerir un ALTER TABLE. `entidad_tipo`/`entidad_id` apuntan al recurso sin
+-- FK, para que el evento sobreviva al borrado de la entidad.
+-- -----------------------------------------------------------------------------
+CREATE TABLE evento (
+    evento_id   INT          NOT NULL AUTO_INCREMENT,
+    tipo        VARCHAR(30)  NOT NULL,
+    descripcion VARCHAR(255) NOT NULL,
+    entidad_tipo VARCHAR(20) NULL,
+    entidad_id   VARCHAR(20) NULL,
+    creado_en   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (evento_id),
+    KEY idx_evento_creado_en (creado_en)
+) ENGINE=InnoDB;
+
+
+-- -----------------------------------------------------------------------------
+-- ajuste_recibo
+-- -----------------------------------------------------------------------------
+-- Trabajos de ajuste de recibos. Ajustar la planilla tarda más de un minuto, así
+-- que el POST no lo resuelve dentro del request: encola el pedido y el cliente
+-- consulta esta fila para saber cómo viene. Mientras haya uno en 'pendiente' o
+-- 'en_proceso' no se acepta otro, porque la planilla es un archivo compartido y
+-- dos ejecuciones simultáneas la corromperían.
+-- -----------------------------------------------------------------------------
+CREATE TABLE ajuste_recibo (
+    ajuste_id                   INT      NOT NULL AUTO_INCREMENT,
+    mes                         SMALLINT NOT NULL,
+    anio                        SMALLINT NOT NULL,
+    estado                      ENUM('pendiente', 'en_proceso', 'completado', 'fallido')
+                                    NOT NULL DEFAULT 'pendiente',
+    contratos_ajustados         INT      NULL,
+    propiedades_marcadas_adeuda INT      NULL,
+    error                       VARCHAR(500) NULL,
+    creado_en                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finalizado_en               DATETIME NULL,
+
+    PRIMARY KEY (ajuste_id),
+    KEY idx_ajuste_estado (estado)
 ) ENGINE=InnoDB;

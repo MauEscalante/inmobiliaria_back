@@ -34,24 +34,52 @@ lo que se puede volver a correr solo para dejar los datos de prueba como estaban
 | `contrato_inquilino` | N:N contrato ↔ inquilinos (admite co-inquilinos). |
 | `garante` | Garantes del contrato. El tipo lo determina `contrato.garantia`. |
 | `valor_historico` | Historial de importes: una fila por período entre ajustes. |
-| `libroDiario` | Ingresos y egresos de la inmobiliaria. |
+| `libroDiario` | Ingresos, egresos, depósitos y retiros de la inmobiliaria. |
+| `evento` | Bitácora de altas para el panel de actividad reciente. |
+| `ajuste_recibo` | Trabajos de ajuste de recibos: estado y resultado de cada corrida. |
 
-Las tablas `valor_historico` y `libroDiario` todavía no tienen modelo en
-`app/models/`; se consultan por SQL crudo.
+Varias de estas tablas se consultan por SQL crudo desde `app/api/services/`
+aunque tengan modelo en `app/models/`.
 
 ### Verificar que el DDL y los modelos coincidan
 
+El `import app.models` es lo que registra los modelos en el metadata: si se
+importa solo alguno, las tablas que falten no se chequean y el drift pasa
+desapercibido.
+
 ```bash
 python -c "
-from app.database.base import Base
-from app.models.garante import Garante
-from app.database.connection import engine
 from sqlalchemy import inspect
+from app.database.connection import Base, engine
+import app.models
 insp = inspect(engine)
+vivas = {t.lower() for t in insp.get_table_names()}
 for t in Base.metadata.sorted_tables:
-    faltan = {c.name for c in t.columns} - {c['name'] for c in insp.get_columns(t.name)}
-    print(t.name, 'OK' if not faltan else f'FALTAN: {faltan}')
+    if t.name.lower() not in vivas:
+        print(t.name, 'AUSENTE en la base')
+        continue
+    reales = {c['name'] for c in insp.get_columns(t.name)}
+    faltan = {c.name for c in t.columns} - reales
+    sobran = reales - {c.name for c in t.columns}
+    detalle = 'faltan=%s sobran=%s' % (sorted(faltan), sorted(sobran))
+    print(t.name, 'OK' if not (faltan or sobran) else detalle)
 "
+```
+
+Si aparece algo `AUSENTE`, la base viene de una versión anterior: correr
+`sql/03_migracion.sql` (ver más abajo).
+
+### Migrar una base ya existente
+
+Si la base viene de una versión anterior y no se puede recrear, `sql/03_migracion.sql`
+la pone al día sin borrar datos: estado de alquiler, columnas nuevas de
+`libroDiario`, `evento` y `ajuste_recibo`. No hace falta si se corre `01_schema.sql`.
+
+Cada paso se aplica solo si falta, así que es seguro correrlo siempre: sobre una
+base ya migrada no hace nada, y una que quedó a mitad de camino se completa.
+
+```bash
+mysql -u root -p inmobiliaria_db < sql/03_migracion.sql
 ```
 
 ### Datos de prueba

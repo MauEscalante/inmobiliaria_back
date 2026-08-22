@@ -1,13 +1,17 @@
-from decimal import Decimal
-
-from app.models.cliente import Cliente, ClienteTipo
-from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad, PropiedadPropietario
 from app.api.services.cliente_services import find_or_create_cliente
+from app.api.services.evento_service import registrar
+from app.models.cliente import Cliente, ClienteTipo
+from app.models.evento import TipoEvento
+from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad, PropiedadPropietario
 from app.database.connection import SessionLocal
+from app.utils.helpers import serializar_fila
 from sqlalchemy import text
 
 # Campos que el cliente puede setear; el resto (estado inicial, id) lo decide el backend.
 PROPIEDAD_FIELDS = {"direccion", "ambientes"}
+
+# Columnas que acepta la edición parcial.
+PROPIEDAD_EDITABLES = ("direccion", "ambientes", "estado", "estado_alquiler")
 
 # Fila enriquecida de propiedad: suma propietario, inquilino vigente y comisión.
 # La comisión pertenece al propietario (es la misma en todas sus propiedades), por eso
@@ -32,27 +36,58 @@ PROPIEDAD_SELECT = """
               SELECT c.contrato_id
                 FROM contrato c
                WHERE c.propiedad = p.propiedad_id
+                 AND c.estado = 'Activo'
                  AND CURDATE() BETWEEN c.fecha_inicio AND c.fecha_fin
                ORDER BY c.fecha_inicio DESC, c.contrato_id DESC
                LIMIT 1)) AS inquilino
     FROM propiedad p
 """
 
+PROPIETARIOS_SELECT = """
+    SELECT cl.cliente_num, CONCAT(cl.nombre, ' ', cl.apellido) AS nombre,
+           pp.porcentaje, pp.comision
+    FROM propiedad_propietario pp
+    JOIN cliente cl ON cl.cliente_num = pp.cliente
+    WHERE pp.propiedad_id = :propiedad_id
+    ORDER BY cl.apellido
+"""
 
-def _serializar(row) -> dict:
-    propiedad = dict(row)
-    # Decimal no es serializable a JSON por FastAPI sin convertirlo antes.
-    for campo in ("comision", "porcentaje"):
-        if isinstance(propiedad.get(campo), Decimal):
-            propiedad[campo] = float(propiedad[campo])
-    return propiedad
+
+def _filtros(estado: str | None, estado_alquiler: str | None, q: str | None) -> tuple[str, dict]:
+    condiciones = []
+    params: dict = {}
+
+    if estado:
+        condiciones.append("p.estado = :estado")
+        params["estado"] = estado
+    if estado_alquiler:
+        condiciones.append("p.estado_alquiler = :estado_alquiler")
+        params["estado_alquiler"] = estado_alquiler
+    if q:
+        condiciones.append("p.direccion LIKE :q")
+        params["q"] = f"%{q}%"
+
+    where = f" WHERE {' AND '.join(condiciones)}" if condiciones else ""
+    return where, params
 
 
-def get_inmuebles() -> list:
+def get_inmuebles(
+    estado: str | None, estado_alquiler: str | None, q: str | None, limit: int, offset: int
+) -> tuple[list, int]:
+    """Página de propiedades más el total que matchea el filtro."""
     db = SessionLocal()
     try:
-        query = text(PROPIEDAD_SELECT + " ORDER BY p.propiedad_id")
-        return [_serializar(row) for row in db.execute(query).mappings().all()]
+        where, params = _filtros(estado, estado_alquiler, q)
+
+        total = db.execute(
+            text(f"SELECT COUNT(*) FROM propiedad p{where}"), params
+        ).scalar() or 0
+
+        query = text(
+            PROPIEDAD_SELECT + where + " ORDER BY p.propiedad_id LIMIT :_limit OFFSET :_offset"
+        )
+        filas = db.execute(query, {**params, "_limit": limit, "_offset": offset}).mappings().all()
+        return [serializar_fila(fila) for fila in filas], total
     finally:
         db.close()
 
@@ -67,19 +102,11 @@ def get_inmueble_by_id(propiedad_id: int) -> dict:
             return None
 
         propietarios = db.execute(
-            text("""
-                SELECT cl.cliente_num, CONCAT(cl.nombre, ' ', cl.apellido) AS nombre,
-                       pp.porcentaje, pp.comision
-                FROM propiedad_propietario pp
-                JOIN cliente cl ON cl.cliente_num = pp.cliente
-                WHERE pp.propiedad_id = :propiedad_id
-                ORDER BY cl.apellido
-            """),
-            {"propiedad_id": propiedad_id},
+            text(PROPIETARIOS_SELECT), {"propiedad_id": propiedad_id}
         ).mappings().all()
 
-        detalle = _serializar(propiedad)
-        detalle["propietarios"] = [_serializar(row) for row in propietarios]
+        detalle = serializar_fila(propiedad)
+        detalle["propietarios"] = [serializar_fila(fila) for fila in propietarios]
         return detalle
     finally:
         db.close()
@@ -93,16 +120,25 @@ class PropietarioInexistenteError(Exception):
         super().__init__(f"El propietario {cliente_num} no existe")
 
 
+def get_propietarios_de_propiedad(propiedad_id: int) -> list:
+    """Sub-recurso /propiedades/{id}/propietarios: la asociación con su porcentaje."""
+    db = SessionLocal()
+    try:
+        filas = db.execute(
+            text(PROPIETARIOS_SELECT), {"propiedad_id": propiedad_id}
+        ).mappings().all()
+        return [serializar_fila(fila) for fila in filas]
+    finally:
+        db.close()
+
+
 def create_inmueble(propiedad_data: dict) -> dict:
-    """Crea la propiedad junto con sus propietarios en una sola transacción.
+    """Crea la propiedad y, en la misma transacción, sus propietarios.
 
-    Cada propietario llega con `cliente_num` (ya existe) o con sus datos para
-    darlo de alta como Propietario. La comisión es una sola para la propiedad:
-    se guarda repetida en cada fila, que es como la lee PROPIEDAD_SELECT.
+    Los propietarios que no existen se dan de alta como clientes acá: es la única
+    forma de que un propietario entre al sistema, igual que el inquilino entra al
+    crear el contrato.
     """
-    propietarios_data = propiedad_data.get("propietarios") or []
-    comision = propiedad_data.get("comision")
-
     db = SessionLocal()
     try:
         campos = {k: v for k, v in propiedad_data.items() if k in PROPIEDAD_FIELDS}
@@ -112,27 +148,39 @@ def create_inmueble(propiedad_data: dict) -> dict:
             estado_alquiler=EstadoAlquiler.Adeuda,
         )
         db.add(nueva_propiedad)
-        db.flush()  # asigna propiedad_id antes de asociar los propietarios
+        db.flush()  # asigna propiedad_id antes del commit
+        propiedad_id = nueva_propiedad.propiedad_id
 
-        for propietario_data in propietarios_data:
+        registrar(
+            db,
+            TipoEvento.propiedad_creada.value,
+            f"Ingresó la propiedad {nueva_propiedad.direccion}",
+            "propiedad",
+            propiedad_id,
+        )
+
+        # La comisión es de la propiedad pero se guarda en cada fila de propietario,
+        # que es de donde la lee PROPIEDAD_SELECT.
+        comision = propiedad_data.get("comision")
+
+        for propietario_data in propiedad_data.get("propietarios") or []:
             cliente_num = propietario_data.get("cliente_num")
-
             if cliente_num:
-                cliente = db.get(Cliente, cliente_num)
-                if not cliente:
+                # Sin este chequeo el cliente_num inexistente reventaba como error
+                # de FK, o sea un 500 en vez de un body inválido.
+                if not db.get(Cliente, cliente_num):
                     raise PropietarioInexistenteError(cliente_num)
             else:
-                cliente = find_or_create_cliente(db, propietario_data, ClienteTipo.Propietario)
+                cliente_num = find_or_create_cliente(db, propietario_data, ClienteTipo.Propietario).cliente_num
 
             db.add(PropiedadPropietario(
-                propiedad_id=nueva_propiedad.propiedad_id,
-                cliente_num=cliente.cliente_num,
-                porcentaje=propietario_data.get("porcentaje"),
+                propiedad_id=propiedad_id,
+                cliente_num=cliente_num,
+                porcentaje=propietario_data.get("porcentaje") or 100,
                 comision=comision,
             ))
 
         db.commit()
-        propiedad_id = nueva_propiedad.propiedad_id
     except Exception:
         db.rollback()
         raise
@@ -143,6 +191,7 @@ def create_inmueble(propiedad_data: dict) -> dict:
 
 
 def update_inmueble(propiedad_id: int, propiedad_data: dict) -> dict:
+    """Reemplazo total. El schema garantiza que vengan todas las columnas NOT NULL."""
     db = SessionLocal()
     try:
         query = text("""
@@ -160,6 +209,27 @@ def update_inmueble(propiedad_id: int, propiedad_data: dict) -> dict:
             "estado_alquiler": propiedad_data.get("estado_alquiler"),
             "propiedad_id": propiedad_id,
         })
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+    return get_inmueble_by_id(propiedad_id)
+
+
+def patch_inmueble(propiedad_id: int, campos: dict) -> dict:
+    """Actualización parcial: reemplaza a update_direccion_by_id y update_estado_by_id."""
+    editables = {campo: valor for campo, valor in campos.items() if campo in PROPIEDAD_EDITABLES}
+    if not editables:
+        return get_inmueble_by_id(propiedad_id)
+
+    db = SessionLocal()
+    try:
+        asignaciones = ", ".join(f"{campo} = :{campo}" for campo in editables)
+        query = text(f"UPDATE propiedad SET {asignaciones} WHERE propiedad_id = :propiedad_id")
+        db.execute(query, {**editables, "propiedad_id": propiedad_id})
         db.commit()
     except Exception:
         db.rollback()
@@ -192,40 +262,6 @@ def delete_inmueble(propiedad_id: int) -> bool:
         )
         db.commit()
         return True
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
-def update_direccion_by_id(propiedad_id: int, direccion: str) -> None:
-    db = SessionLocal()
-    try:
-        query = text("""
-        UPDATE propiedad
-        SET direccion= :direccion
-        WHERE propiedad_id= :propiedad_id
-        """)
-        db.execute(query, {"direccion": direccion, "propiedad_id": propiedad_id})
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
-def update_estado_by_id(propiedad_id: int, estado: str) -> None:
-    db = SessionLocal()
-    try:
-        query = text("""
-        UPDATE propiedad
-        SET estado= :estado
-        WHERE propiedad_id= :propiedad_id
-        """)
-        db.execute(query, {"estado": estado, "propiedad_id": propiedad_id})
-        db.commit()
     except Exception:
         db.rollback()
         raise
