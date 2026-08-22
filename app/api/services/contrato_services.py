@@ -1,7 +1,10 @@
 from app.models.contrato import Contrato, ContratoInquilino
 from app.models.cliente import ClienteTipo
 from app.api.services.cliente_services import find_or_create_cliente
+from app.api.services.evento_service import registrar
 from app.api.services.garante_services import crear_garante
+from app.models.evento import TipoEvento
+from app.models.propiedad import Propiedad
 from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
 from sqlalchemy import text
@@ -185,6 +188,17 @@ def crear_contrato(contrato_data: dict):
 
         for garante_data in contrato_data.get("garantes") or []:
             crear_garante(db, garante_data, contrato.contrato_id)
+
+        # El contrato solo guarda el id de la propiedad, y el evento muestra la
+        # dirección: hay que traerla de la misma sesión.
+        propiedad = db.get(Propiedad, contrato.propiedad)
+        registrar(
+            db,
+            TipoEvento.contrato_creado.value,
+            f"Se creó el contrato de {propiedad.direccion}" if propiedad else "Se creó un contrato",
+            "contrato",
+            contrato.contrato_id,
+        )
 
         db.commit()
         db.refresh(contrato)

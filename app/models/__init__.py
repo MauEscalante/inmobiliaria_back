@@ -6,3 +6,5 @@ from app.models.garante import Garante
 from app.models.libro_diario import LibroDiario, TipoMovimiento, CuentaTransferencia
 
 from app.models.ajuste_recibo import AjusteRecibo, EstadoAjuste, ESTADOS_ACTIVOS
+
+from app.models.evento import Evento, TipoEvento

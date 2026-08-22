@@ -1,4 +1,6 @@
+from app.api.services.evento_service import registrar
 from app.models.cliente import Cliente, ClienteTipo
+from app.models.evento import TipoEvento
 from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
 from sqlalchemy import text
@@ -89,6 +91,18 @@ def find_or_create_cliente(db, cliente_data: dict, tipo: ClienteTipo) -> Cliente
     )
     db.add(cliente)
     db.flush()
+
+    # Solo los propietarios van al panel de actividad. Un inquilino nuevo no
+    # genera evento propio: ya se ve en el "Se creó el contrato" que lo trajo.
+    if tipo == ClienteTipo.Propietario:
+        registrar(
+            db,
+            TipoEvento.propietario_creado.value,
+            f"Cliente nuevo - {cliente.nombre} {cliente.apellido}".strip(),
+            "cliente",
+            cliente.cliente_num,
+        )
+
     return cliente
 
 

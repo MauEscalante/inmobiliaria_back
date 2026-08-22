@@ -1,5 +1,7 @@
 from app.api.services.cliente_services import find_or_create_cliente
+from app.api.services.evento_service import registrar
 from app.models.cliente import ClienteTipo
+from app.models.evento import TipoEvento
 from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad, PropiedadPropietario
 from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
@@ -139,6 +141,14 @@ def create_inmueble(propiedad_data: dict) -> dict:
         db.add(nueva_propiedad)
         db.flush()  # asigna propiedad_id antes del commit
         propiedad_id = nueva_propiedad.propiedad_id
+
+        registrar(
+            db,
+            TipoEvento.propiedad_creada.value,
+            f"Ingresó la propiedad {nueva_propiedad.direccion}",
+            "propiedad",
+            propiedad_id,
+        )
 
         # La comisión es de la propiedad pero se guarda en cada fila de propietario,
         # que es de donde la lee PROPIEDAD_SELECT.
