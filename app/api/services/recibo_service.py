@@ -31,6 +31,7 @@ CONTRATOS_A_AJUSTAR_SELECT = """
            importe_inicial, periodicidad, tipo_ajuste
     FROM contrato
     WHERE tipo_ajuste = 'IPC'
+      AND estado = 'Activo'
       AND TIMESTAMPDIFF(MONTH, fecha_inicio, :fecha_liquidacion) > 0
       AND MOD(
               TIMESTAMPDIFF(MONTH, fecha_inicio, :fecha_liquidacion),

@@ -11,6 +11,8 @@ class TipoAjuste (str, Enum):
 class EstadoContrato (str, Enum):
 	Activo="Activo"
 	Inactivo="Inactivo"
+	# Cortado antes de fecha_fin. Entra en el varchar(10) de la columna sin ALTER.
+	Rescindido="Rescindido"
 
 class TipoGarantia (str, Enum):
 	GPremier="GPremier"
@@ -39,10 +41,15 @@ class Contrato(Base):
 	# en `garante`: GPremier nunca las tiene; Garantia Propietaria y Garantes sí.
 	garantia = Column(SQLEnum(TipoGarantia, values_callable=lambda enum_cls: [m.value for m in enum_cls]), nullable=False, default=TipoGarantia.GPremier)
 	direccion_garantia = Column(String(255), nullable=True)
+	# Rescisión: último día del mes en que se fue el inquilino y la penalidad
+	# calculada. `fecha_fin` conserva el plazo pactado para poder auditar el cálculo.
+	fecha_rescision = Column(Date, nullable=True)
+	penalidad = Column(Numeric(12, 2), nullable=True)
 
 	propiedad_obj = relationship("Propiedad", back_populates="contratos")
 	inquilinos = relationship("ContratoInquilino", back_populates="contrato", cascade="all, delete-orphan")
 	garantes = relationship("Garante", back_populates="contrato", cascade="all, delete-orphan")
+	valores_historicos = relationship("ValorHistorico", back_populates="contrato_obj", cascade="all, delete-orphan")
 
 
 class ContratoInquilino(Base):

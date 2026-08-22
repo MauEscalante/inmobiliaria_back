@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.api.controllers.contrato_controller import (
+    calcular_rescision,
     create_contrato,
     delete_contrato,
     get_all_contratos,
     get_contrato_detail,
     get_garantes,
     get_inquilinos,
+    rescindir,
 )
 from app.config import settings
 from app.models.contrato import EstadoContrato
@@ -16,6 +18,8 @@ from app.schemas.contrato import (
     ContratoDetalle,
     ContratoRead,
     InquilinoRead,
+    RescisionCalculo,
+    RescisionCreate,
 )
 from app.schemas.garante import GaranteRead
 from app.utils.helpers import Paginacion
@@ -31,7 +35,7 @@ router = APIRouter(prefix="/contratos", tags=["contratos"])
 )
 def listar_contratos(
     paginacion: Paginacion = Depends(),
-    estado: EstadoContrato | None = Query(None, description="Activo o Inactivo"),
+    estado: EstadoContrato | None = Query(None, description="Activo, Inactivo o Rescindido"),
     propiedad_id: int | None = Query(None, description="Contratos de una propiedad"),
 ):
     items, total = get_all_contratos(
@@ -90,6 +94,46 @@ def listar_inquilinos(contrato_id: str = Path(..., description="Identificador de
 def listar_garantes(contrato_id: str = Path(..., description="Identificador del contrato")):
     """Vacío cuando la garantía es GPremier, que por definición no lleva garantes."""
     return get_garantes(contrato_id)
+
+
+@router.get(
+    "/{contrato_id}/rescision",
+    response_model=RescisionCalculo,
+    summary="Calcular la rescisión de un contrato",
+    response_description="Penalidad que corresponde si el inquilino se va ese mes",
+    responses=error_responses(404, 409, 422),
+)
+def calcular_rescision_contrato(
+    contrato_id: str = Path(..., description="Identificador del contrato"),
+    anio: int = Query(..., ge=2000, le=2100, description="Año en que se va el inquilino"),
+    mes: int = Query(..., ge=1, le=12, description="Mes en que se va el inquilino"),
+):
+    """Simula la rescisión sin persistir nada, para mostrar el número antes de confirmar.
+
+    El día dentro del mes es indistinto: el inquilino paga el mes completo, así que
+    la salida se toma siempre al cierre del mes elegido.
+    """
+    return calcular_rescision(contrato_id, anio, mes)
+
+
+@router.post(
+    "/{contrato_id}/rescision",
+    response_model=RescisionCalculo,
+    summary="Rescindir un contrato",
+    response_description="El cálculo que quedó guardado en el contrato",
+    responses=error_responses(404, 409, 422),
+)
+def rescindir_contrato_endpoint(
+    datos: RescisionCreate,
+    contrato_id: str = Path(..., description="Identificador del contrato"),
+):
+    """Deja el contrato en estado Rescindido con la fecha de salida y la penalidad.
+
+    Recalcula del lado del servidor en vez de confiar en el monto que vio el cliente.
+    La penalidad queda registrada pero no se cobra: el ingreso se carga aparte desde
+    el libro diario, cuando la plata entra de verdad.
+    """
+    return rescindir(contrato_id, datos.anio, datos.mes)
 
 
 @router.delete(

@@ -93,6 +93,8 @@ class ContratoRead(BaseModel):
     estado: EstadoContrato
     garantia: TipoGarantia
     direccion_garantia: str | None = None
+    fecha_rescision: date | None = None
+    penalidad: float | None = None
 
 
 class PropiedadContratoRead(BaseModel):
@@ -119,3 +121,33 @@ class ContratoDetalle(BaseModel):
     tipo_ajuste: TipoAjuste | None = None
     periodicidad: PeriodicidadContrato | None = None
     estado: EstadoContrato
+    fecha_rescision: date | None = None
+    penalidad: float | None = None
+
+
+class RescisionCreate(BaseModel):
+    """Mes en que se va el inquilino. El día es indistinto: paga el mes completo."""
+
+    anio: int = Field(..., ge=2000, le=2100)
+    mes: int = Field(..., ge=1, le=12)
+
+
+class RescisionCalculo(BaseModel):
+    """Lo que cuesta rescindir. Sale igual del preview y de la confirmación."""
+
+    contrato_id: str
+    direccion: str
+    # El plazo pactado, que no se pisa al rescindir: es contra esto que se contaron
+    # los meses restantes.
+    fecha_fin_original: date
+    fecha_salida: date
+    meses_restantes: int
+    # False cuando el contrato llega a término: no hay penalidad que cobrar.
+    anticipada: bool
+    importe_vigente: float
+    # Inicio del tramo de valor_historico del que salió el importe. Si es de un
+    # mes anterior al de salida, ese mes todavía no se liquidó y se arrastró el
+    # último valor conocido.
+    importe_vigente_desde: date
+    porcentaje_penalidad: float
+    penalidad: float

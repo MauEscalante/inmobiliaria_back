@@ -15,6 +15,7 @@ from app.database.connection import Base
 
 class TipoEvento(str, Enum):
     contrato_creado = "contrato_creado"
+    contrato_rescindido = "contrato_rescindido"
     propiedad_creada = "propiedad_creada"
     propietario_creado = "propietario_creado"
     # Todavía no lo emite nadie: la recepción de llaves no existe como

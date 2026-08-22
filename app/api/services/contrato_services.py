@@ -1,8 +1,9 @@
-from app.models.contrato import Contrato, ContratoInquilino
+from app.models.contrato import Contrato, ContratoInquilino, EstadoContrato
 from app.models.cliente import ClienteTipo
 from app.api.services.cliente_services import find_or_create_cliente
 from app.api.services.evento_service import registrar
 from app.api.services.garante_services import crear_garante
+from app.api.services.valor_historico_service import sembrar_tramo_inicial
 from app.models.evento import TipoEvento
 from app.models.propiedad import Propiedad
 from app.database.connection import SessionLocal
@@ -87,6 +88,7 @@ def get_contrato_detalle(contrato_id: str):
                 SELECT c.contrato_id, c.fecha_inicio, c.fecha_fin, c.importe_inicial,
                        c.deposito, c.tipo_ajuste, c.periodicidad, c.estado,
                        c.garantia, c.direccion_garantia,
+                       c.fecha_rescision, c.penalidad,
                        p.propiedad_id, p.direccion
                 FROM contrato c
                 JOIN propiedad p ON p.propiedad_id = c.propiedad
@@ -134,6 +136,8 @@ def get_contrato_detalle(contrato_id: str):
             "tipo_ajuste": contrato["tipo_ajuste"],
             "periodicidad": contrato["periodicidad"],
             "estado": contrato["estado"],
+            "fecha_rescision": contrato["fecha_rescision"],
+            "penalidad": contrato["penalidad"],
         }
     finally:
         db.close()
@@ -189,6 +193,11 @@ def crear_contrato(contrato_data: dict):
         for garante_data in contrato_data.get("garantes") or []:
             crear_garante(db, garante_data, contrato.contrato_id)
 
+        # El importe vigente de un contrato se lee de valor_historico, así que el
+        # alta tiene que dejar sembrado el primer tramo o el contrato nace sin
+        # importe consultable por fecha.
+        sembrar_tramo_inicial(db, contrato)
+
         # El contrato solo guarda el id de la propiedad, y el evento muestra la
         # dirección: hay que traerla de la misma sesión.
         propiedad = db.get(Propiedad, contrato.propiedad)
@@ -196,6 +205,45 @@ def crear_contrato(contrato_data: dict):
             db,
             TipoEvento.contrato_creado.value,
             f"Se creó el contrato de {propiedad.direccion}" if propiedad else "Se creó un contrato",
+            "contrato",
+            contrato.contrato_id,
+        )
+
+        db.commit()
+        db.refresh(contrato)
+        db.expunge(contrato)
+        return contrato
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def rescindir_contrato(contrato_id: str, fecha_salida, penalidad):
+    """Cierra el contrato por rescisión. Devuelve None si no existe.
+
+    `fecha_fin` no se toca: guarda el plazo pactado, que es contra lo que se
+    calculó la penalidad. Quien quiera saber hasta cuándo estuvo ocupada la
+    propiedad mira `fecha_rescision`.
+    """
+    db = SessionLocal()
+    try:
+        contrato = db.query(Contrato).where(Contrato.contrato_id == contrato_id).first()
+        if not contrato:
+            return None
+
+        contrato.estado = EstadoContrato.Rescindido
+        contrato.fecha_rescision = fecha_salida
+        contrato.penalidad = penalidad
+
+        propiedad = db.get(Propiedad, contrato.propiedad)
+        registrar(
+            db,
+            TipoEvento.contrato_rescindido.value,
+            f"Se rescindió el contrato de {propiedad.direccion}"
+            if propiedad
+            else "Se rescindió un contrato",
             "contrato",
             contrato.contrato_id,
         )

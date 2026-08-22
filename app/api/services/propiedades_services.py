@@ -36,6 +36,7 @@ PROPIEDAD_SELECT = """
               SELECT c.contrato_id
                 FROM contrato c
                WHERE c.propiedad = p.propiedad_id
+                 AND c.estado = 'Activo'
                  AND CURDATE() BETWEEN c.fecha_inicio AND c.fecha_fin
                ORDER BY c.fecha_inicio DESC, c.contrato_id DESC
                LIMIT 1)) AS inquilino
