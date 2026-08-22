@@ -41,9 +41,15 @@ class Contrato(Base):
 	# en `garante`: GPremier nunca las tiene; Garantia Propietaria y Garantes sí.
 	garantia = Column(SQLEnum(TipoGarantia, values_callable=lambda enum_cls: [m.value for m in enum_cls]), nullable=False, default=TipoGarantia.GPremier)
 	direccion_garantia = Column(String(255), nullable=True)
-	# Rescisión: último día del mes en que se fue el inquilino y la penalidad
-	# calculada. `fecha_fin` conserva el plazo pactado para poder auditar el cálculo.
+	# Rescisión en dos pasos. Al registrar el aviso solo se escribe `fecha_rescision`
+	# (último día del mes de salida) y el contrato SIGUE Activo: todavía tiene que
+	# liquidar y ajustar ese mes, que el inquilino paga igual. Al cargar la entrega de
+	# llaves se cierra: estado Rescindido y la penalidad, ya calculada sobre el
+	# alquiler real del mes. `fecha_fin` conserva el plazo pactado para auditar.
+	#
+	# Aviso pendiente == estado Activo con fecha_rescision no nula.
 	fecha_rescision = Column(Date, nullable=True)
+	fecha_entrega_llaves = Column(Date, nullable=True)
 	penalidad = Column(Numeric(12, 2), nullable=True)
 
 	propiedad_obj = relationship("Propiedad", back_populates="contratos")

@@ -18,11 +18,14 @@ from app.models.valor_historico import ValorHistorico  # noqa: F401
 #
 # Con un solo ORDER BY se resuelven los tres casos: el tramo que cubre el mes, el
 # que abre a mitad de mes (gana el más nuevo, que es con el que el inquilino se
-# va) y el mes todavía no liquidado, que cae en el último tramo conocido. Los
-# tramos se escriben mes a mes al liquidar, así que el mes que viene nunca tiene
-# el suyo propio y sin este arrastre no se podría rescindir por adelantado.
+# va) y el mes todavía no liquidado, que cae en el último tramo conocido.
+#
+# `fecha_fin` viene en el SELECT justamente para poder distinguir el tercer caso:
+# si el tramo termina antes del cierre del mes, el importe está arrastrado y no es
+# el de ese mes. Quien llama decide qué hacer con eso —la rescisión lo muestra como
+# estimado en vez de darlo por bueno—, pero no puede decidirlo sin este dato.
 IMPORTE_DEL_MES_SELECT = """
-    SELECT importe_inicial, fecha_inicio
+    SELECT importe_inicial, fecha_inicio, fecha_fin
     FROM valor_historico
     WHERE contrato = :contrato_id
       AND fecha_inicio <= :fin_mes
@@ -32,7 +35,7 @@ IMPORTE_DEL_MES_SELECT = """
 
 
 def get_importe_del_mes(db, contrato_id: str, fin_mes: date):
-    """Importe que rige en ese mes, con la fecha del tramo del que salió.
+    """Importe que rige en ese mes, con la vigencia del tramo del que salió.
 
     Devuelve None si el contrato no tiene ningún tramo anterior al mes pedido.
     """

@@ -94,6 +94,7 @@ class ContratoRead(BaseModel):
     garantia: TipoGarantia
     direccion_garantia: str | None = None
     fecha_rescision: date | None = None
+    fecha_entrega_llaves: date | None = None
     penalidad: float | None = None
 
 
@@ -122,6 +123,7 @@ class ContratoDetalle(BaseModel):
     periodicidad: PeriodicidadContrato | None = None
     estado: EstadoContrato
     fecha_rescision: date | None = None
+    fecha_entrega_llaves: date | None = None
     penalidad: float | None = None
 
 
@@ -130,6 +132,25 @@ class RescisionCreate(BaseModel):
 
     anio: int = Field(..., ge=2000, le=2100)
     mes: int = Field(..., ge=1, le=12)
+
+
+class EntregaLlavesCreate(BaseModel):
+    """Cierre de la rescisión: el día en que el inquilino devolvió las llaves.
+
+    `importe_alquiler` solo hace falta cuando el mes de la entrega todavía no tiene
+    su tramo en `valor_historico` —el ajuste del mes no se cargó—, porque ahí el
+    sistema no tiene de dónde sacar el alquiler sobre el que se calcula la penalidad.
+    """
+
+    fecha_entrega: date
+    importe_alquiler: Decimal | None = Field(None, gt=0, decimal_places=2)
+
+    @model_validator(mode="after")
+    def _entrega_no_futura(self):
+        # Las llaves se entregan o no se entregan; no se agendan.
+        if self.fecha_entrega > date.today():
+            raise ValueError("la fecha de entrega de llaves no puede ser futura")
+        return self
 
 
 class RescisionCalculo(BaseModel):
@@ -145,9 +166,11 @@ class RescisionCalculo(BaseModel):
     # False cuando el contrato llega a término: no hay penalidad que cobrar.
     anticipada: bool
     importe_vigente: float
-    # Inicio del tramo de valor_historico del que salió el importe. Si es de un
-    # mes anterior al de salida, ese mes todavía no se liquidó y se arrastró el
-    # último valor conocido.
+    # Inicio del tramo de valor_historico del que salió el importe.
     importe_vigente_desde: date
+    # True cuando ese tramo no llega a cubrir el mes de salida: el mes todavía no
+    # se liquidó y el importe es el último conocido, así que la penalidad es una
+    # estimación. Se resuelve al cerrar por entrega de llaves.
+    importe_estimado: bool
     porcentaje_penalidad: float
     penalidad: float

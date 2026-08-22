@@ -88,7 +88,7 @@ def get_contrato_detalle(contrato_id: str):
                 SELECT c.contrato_id, c.fecha_inicio, c.fecha_fin, c.importe_inicial,
                        c.deposito, c.tipo_ajuste, c.periodicidad, c.estado,
                        c.garantia, c.direccion_garantia,
-                       c.fecha_rescision, c.penalidad,
+                       c.fecha_rescision, c.fecha_entrega_llaves, c.penalidad,
                        p.propiedad_id, p.direccion
                 FROM contrato c
                 JOIN propiedad p ON p.propiedad_id = c.propiedad
@@ -137,6 +137,7 @@ def get_contrato_detalle(contrato_id: str):
             "periodicidad": contrato["periodicidad"],
             "estado": contrato["estado"],
             "fecha_rescision": contrato["fecha_rescision"],
+            "fecha_entrega_llaves": contrato["fecha_entrega_llaves"],
             "penalidad": contrato["penalidad"],
         }
     finally:
@@ -220,8 +221,45 @@ def crear_contrato(contrato_data: dict):
         db.close()
 
 
-def rescindir_contrato(contrato_id: str, fecha_salida, penalidad):
-    """Cierra el contrato por rescisión. Devuelve None si no existe.
+def registrar_aviso_rescision(contrato_id: str, fecha_salida):
+    """Anota que el inquilino se va tal mes. Devuelve None si el contrato no existe.
+
+    El estado NO cambia: el contrato sigue Activo hasta que se entreguen las llaves,
+    porque el mes de salida se cobra y se ajusta como cualquier otro. Marcarlo
+    Rescindido acá lo sacaría de la liquidación justo el mes que hace falta.
+    """
+    db = SessionLocal()
+    try:
+        contrato = db.query(Contrato).where(Contrato.contrato_id == contrato_id).first()
+        if not contrato:
+            return None
+
+        contrato.fecha_rescision = fecha_salida
+
+        propiedad = db.get(Propiedad, contrato.propiedad)
+        registrar(
+            db,
+            TipoEvento.contrato_rescindido.value,
+            f"Se rescindió el contrato de {propiedad.direccion}"
+            if propiedad
+            else "Se rescindió un contrato",
+            "contrato",
+            contrato.contrato_id,
+        )
+
+        db.commit()
+        db.refresh(contrato)
+        db.expunge(contrato)
+        return contrato
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def cerrar_rescision(contrato_id: str, fecha_entrega, fecha_salida, penalidad):
+    """Cierra el contrato al entregarse las llaves. Devuelve None si no existe.
 
     `fecha_fin` no se toca: guarda el plazo pactado, que es contra lo que se
     calculó la penalidad. Quien quiera saber hasta cuándo estuvo ocupada la
@@ -234,19 +272,31 @@ def rescindir_contrato(contrato_id: str, fecha_salida, penalidad):
             return None
 
         contrato.estado = EstadoContrato.Rescindido
+        contrato.fecha_entrega_llaves = fecha_entrega
+        # Si la entrega se corrió a un mes posterior al avisado, manda ese.
         contrato.fecha_rescision = fecha_salida
         contrato.penalidad = penalidad
 
-        propiedad = db.get(Propiedad, contrato.propiedad)
-        registrar(
-            db,
-            TipoEvento.contrato_rescindido.value,
-            f"Se rescindió el contrato de {propiedad.direccion}"
-            if propiedad
-            else "Se rescindió un contrato",
-            "contrato",
-            contrato.contrato_id,
-        )
+        db.commit()
+        db.refresh(contrato)
+        db.expunge(contrato)
+        return contrato
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def cancelar_aviso_rescision(contrato_id: str):
+    """Deshace un aviso mal cargado. Devuelve None si el contrato no existe."""
+    db = SessionLocal()
+    try:
+        contrato = db.query(Contrato).where(Contrato.contrato_id == contrato_id).first()
+        if not contrato:
+            return None
+
+        contrato.fecha_rescision = None
 
         db.commit()
         db.refresh(contrato)

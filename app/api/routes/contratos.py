@@ -2,13 +2,15 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.api.controllers.contrato_controller import (
     calcular_rescision,
+    cancelar_rescision,
+    cerrar_por_entrega_llaves,
     create_contrato,
     delete_contrato,
     get_all_contratos,
     get_contrato_detail,
     get_garantes,
     get_inquilinos,
-    rescindir,
+    registrar_rescision,
 )
 from app.config import settings
 from app.models.contrato import EstadoContrato
@@ -17,6 +19,7 @@ from app.schemas.contrato import (
     ContratoCreate,
     ContratoDetalle,
     ContratoRead,
+    EntregaLlavesCreate,
     InquilinoRead,
     RescisionCalculo,
     RescisionCreate,
@@ -119,21 +122,60 @@ def calcular_rescision_contrato(
 @router.post(
     "/{contrato_id}/rescision",
     response_model=RescisionCalculo,
-    summary="Rescindir un contrato",
-    response_description="El cálculo que quedó guardado en el contrato",
+    summary="Registrar el aviso de rescisión de un contrato",
+    response_description="La estimación de la penalidad al momento del aviso",
     responses=error_responses(404, 409, 422),
 )
-def rescindir_contrato_endpoint(
+def registrar_rescision_endpoint(
     datos: RescisionCreate,
     contrato_id: str = Path(..., description="Identificador del contrato"),
 ):
-    """Deja el contrato en estado Rescindido con la fecha de salida y la penalidad.
+    """Anota que el inquilino se va tal mes. NO cierra el contrato.
 
-    Recalcula del lado del servidor en vez de confiar en el monto que vio el cliente.
+    El contrato queda Activo con `fecha_rescision` cargada: ese mes lo paga, y tiene
+    que seguir liquidando y ajustando como cualquier otro. La penalidad se calcula
+    recién al cerrar por entrega de llaves, cuando el alquiler del mes de salida ya
+    se conoce; hasta entonces el número que devuelve este endpoint es una estimación
+    sobre el último importe cargado.
+    """
+    return registrar_rescision(contrato_id, datos.anio, datos.mes)
+
+
+@router.post(
+    "/{contrato_id}/entrega-llaves",
+    response_model=RescisionCalculo,
+    summary="Cerrar la rescisión con la entrega de llaves",
+    response_description="El cálculo definitivo que quedó guardado en el contrato",
+    responses=error_responses(404, 409, 422),
+)
+def entregar_llaves_endpoint(
+    datos: EntregaLlavesCreate,
+    contrato_id: str = Path(..., description="Identificador del contrato"),
+):
+    """Deja el contrato en Rescindido con la penalidad definitiva.
+
+    Manda el mes de la entrega, no el que se avisó. Si ese mes todavía no tiene su
+    importe en `valor_historico` responde 422 con `importe_del_mes_desconocido`, y hay
+    que reintentar mandando `importe_alquiler`: es preferible pedir el dato a congelar
+    una penalidad sobre un alquiler viejo.
+
     La penalidad queda registrada pero no se cobra: el ingreso se carga aparte desde
     el libro diario, cuando la plata entra de verdad.
     """
-    return rescindir(contrato_id, datos.anio, datos.mes)
+    return cerrar_por_entrega_llaves(contrato_id, datos.fecha_entrega, datos.importe_alquiler)
+
+
+@router.delete(
+    "/{contrato_id}/rescision",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancelar el aviso de rescisión",
+    responses=error_responses(404, 409),
+)
+def cancelar_rescision_endpoint(
+    contrato_id: str = Path(..., description="Identificador del contrato"),
+):
+    """Borra un aviso mal cargado. No sirve sobre un contrato ya cerrado."""
+    cancelar_rescision(contrato_id)
 
 
 @router.delete(

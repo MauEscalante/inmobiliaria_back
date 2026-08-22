@@ -126,10 +126,18 @@ CREATE TABLE contrato (
     periodicidad       ENUM('Trimestral', 'Cuatrimestral', 'Semestral') NULL,
     importe_inicial    DECIMAL(12,2) NOT NULL,
     deposito           DECIMAL(12,2) NULL,
-    estado             ENUM('Activo', 'Inactivo') NOT NULL DEFAULT 'Activo',
+    estado             ENUM('Activo', 'Inactivo', 'Rescindido') NOT NULL DEFAULT 'Activo',
     garantia           ENUM('GPremier', 'Garantia Propietaria', 'Garantes')
                        NOT NULL DEFAULT 'GPremier',
     direccion_garantia VARCHAR(255)  NULL,
+    -- Rescisión en dos pasos. Al registrarse el aviso solo se carga
+    -- `fecha_rescision` (cierre del mes de salida) y el contrato sigue Activo:
+    -- ese mes lo paga, así que todavía liquida y ajusta. Al entregarse las
+    -- llaves pasa a Rescindido con la penalidad ya calculada sobre el alquiler
+    -- real del mes. `fecha_fin` conserva el plazo pactado para poder auditarlo.
+    fecha_rescision      DATE          NULL,
+    fecha_entrega_llaves DATE          NULL,
+    penalidad            DECIMAL(12,2) NULL,
 
     PRIMARY KEY (contrato_id),
     KEY fk_contrato_propiedad (propiedad),

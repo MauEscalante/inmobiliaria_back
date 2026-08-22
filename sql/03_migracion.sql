@@ -144,3 +144,41 @@ CREATE TABLE IF NOT EXISTS ajuste_recibo (
     PRIMARY KEY (ajuste_id),
     KEY idx_ajuste_estado (estado)
 ) ENGINE=InnoDB;
+
+-- -----------------------------------------------------------------------------
+-- 5) Rescisión de contratos
+-- -----------------------------------------------------------------------------
+-- El aviso y el cierre son dos momentos distintos: entre uno y otro el contrato
+-- sigue Activo con `fecha_rescision` cargada y `penalidad` en NULL, porque el
+-- alquiler del mes de salida todavía no se conoce.
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'contrato' AND COLUMN_NAME = 'fecha_rescision') = 0,
+  'ALTER TABLE contrato ADD COLUMN fecha_rescision DATE NULL AFTER direccion_garantia',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'contrato' AND COLUMN_NAME = 'fecha_entrega_llaves') = 0,
+  'ALTER TABLE contrato ADD COLUMN fecha_entrega_llaves DATE NULL AFTER fecha_rescision',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'contrato' AND COLUMN_NAME = 'penalidad') = 0,
+  'ALTER TABLE contrato ADD COLUMN penalidad DECIMAL(12,2) NULL AFTER fecha_entrega_llaves',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- El estado suma 'Rescindido'. En las bases donde la columna quedó como VARCHAR
+-- esto la normaliza al ENUM. Donde ya es ENUM, le agrega el valor que faltaba.
+ALTER TABLE contrato
+  MODIFY COLUMN estado ENUM('Activo','Inactivo','Rescindido') NOT NULL DEFAULT 'Activo';

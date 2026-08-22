@@ -4,6 +4,8 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.api.errors import raise_conflict, raise_not_found, raise_unprocessable
 from app.api.services.contrato_services import (
+    cancelar_aviso_rescision,
+    cerrar_rescision,
     crear_contrato,
     eliminar_contrato,
     existe_contrato,
@@ -12,7 +14,7 @@ from app.api.services.contrato_services import (
     get_contratos,
     get_garantes_de_contrato,
     get_inquilinos_de_contrato,
-    rescindir_contrato,
+    registrar_aviso_rescision,
 )
 from app.api.services.propiedades_services import get_inmueble_by_id
 from app.api.services.valor_historico_service import get_importe_vigente_del_mes
@@ -23,8 +25,8 @@ from app.models.contrato import EstadoContrato
 PORCENTAJE_PENALIDAD = Decimal("0.10")
 
 # Meses hacia adelante que se aceptan como mes de salida, contando desde el actual.
-# Los tramos de valor_historico se escriben al liquidar cada mes, así que más allá
-# del mes que viene el importe sería una proyección y no un dato.
+# Más allá del mes que viene el importe sería pura proyección: ni siquiera existe el
+# índice con el que se ajustaría.
 MESES_VENTANA_SALIDA = 1
 
 
@@ -77,6 +79,32 @@ def _mes_limite() -> tuple[int, int]:
     return (hoy.year + (mes - 1) // 12, (mes - 1) % 12 + 1)
 
 
+def _validar_ventana_de_aviso(anio: int, mes: int) -> None:
+    """El aviso solo se registra para el mes actual o el siguiente.
+
+    No es una regla del cálculo sino del aviso: la entrega de llaves se carga unos
+    días después de ocurrida y su mes puede ser el que recién cerró, así que el
+    preview tiene que poder calcular ese mes igual.
+    """
+    hoy = date.today()
+    if (anio, mes) < (hoy.year, hoy.month):
+        # Un mes ya cerrado tiene los recibos emitidos y se calculó sobre otro escenario.
+        raise_unprocessable(
+            "No se puede rescindir en un mes ya cerrado: elegí el mes actual o el siguiente",
+            field="mes",
+            code="salida_antes_del_mes_actual",
+        )
+
+    limite = _mes_limite()
+    if (anio, mes) > limite:
+        raise_unprocessable(
+            f"Solo se puede rescindir hasta {limite[1]:02d}/{limite[0]}, "
+            "el mes siguiente al actual",
+            field="mes",
+            code="salida_fuera_de_ventana",
+        )
+
+
 def calcular_rescision(contrato_id: str, anio: int, mes: int) -> dict:
     """Cuánto sale irse en un mes dado, sin tocar nada.
 
@@ -104,15 +132,6 @@ def calcular_rescision(contrato_id: str, anio: int, mes: int) -> dict:
             code="salida_antes_del_inicio",
         )
 
-    limite = _mes_limite()
-    if (anio, mes) > limite:
-        raise_unprocessable(
-            f"Solo se puede rescindir hasta {limite[1]:02d}/{limite[0]}, "
-            "el mes siguiente al actual",
-            field="mes",
-            code="salida_fuera_de_ventana",
-        )
-
     fecha_salida = date(anio, mes, monthrange(anio, mes)[1])
 
     # Meses calendario que quedaban por pagar después de la salida. Irse en el mes
@@ -133,7 +152,19 @@ def calcular_rescision(contrato_id: str, anio: int, mes: int) -> dict:
             code="sin_importe_vigente",
         )
 
-    importe = tramo["importe_inicial"]
+    return _armar_calculo(contrato, fecha_salida, meses_restantes, tramo)
+
+
+def _armar_calculo(contrato, fecha_salida, meses_restantes, tramo, importe_manual=None):
+    """Penalidad a partir de un tramo de valor_historico.
+
+    `importe_manual` pisa el tramo: lo usa el cierre por entrega de llaves cuando el
+    mes no está liquidado y el operador carga el alquiler a mano.
+    """
+    # El tramo arrastrado no es el valor del mes: es el último que se conoce.
+    estimado = tramo["fecha_fin"] < fecha_salida
+    importe = Decimal(importe_manual) if importe_manual is not None else tramo["importe_inicial"]
+
     penalidad = (importe * meses_restantes * PORCENTAJE_PENALIDAD).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
@@ -141,27 +172,107 @@ def calcular_rescision(contrato_id: str, anio: int, mes: int) -> dict:
     propiedad = get_inmueble_by_id(contrato.propiedad)
 
     return {
-        "contrato_id": contrato_id,
+        "contrato_id": contrato.contrato_id,
         "direccion": propiedad["direccion"] if propiedad else "",
         "fecha_fin_original": contrato.fecha_fin,
         "fecha_salida": fecha_salida,
         "meses_restantes": meses_restantes,
         "anticipada": meses_restantes > 0,
         "importe_vigente": importe,
-        # De qué tramo salió el importe. Cuando el mes de salida todavía no se
-        # liquidó es anterior al mes elegido, y la pantalla lo aclara.
         "importe_vigente_desde": tramo["fecha_inicio"],
+        # Un importe cargado a mano es, por definición, el del mes: deja de ser estimado.
+        "importe_estimado": estimado and importe_manual is None,
         "porcentaje_penalidad": PORCENTAJE_PENALIDAD,
         "penalidad": penalidad,
     }
 
 
-def rescindir(contrato_id: str, anio: int, mes: int) -> dict:
-    """Confirma la rescisión. Recalcula en vez de confiar en lo que vio el cliente."""
+def registrar_rescision(contrato_id: str, anio: int, mes: int) -> dict:
+    """Registra el aviso: el inquilino se va tal mes.
+
+    Solo persiste la fecha de salida. El contrato sigue Activo —ese mes lo paga, así
+    que todavía tiene que liquidar y ajustar— y la penalidad queda pendiente hasta la
+    entrega de llaves, cuando el alquiler del mes ya se conoce. La penalidad que sale
+    de acá es la estimación que se le muestra al operador, no un compromiso.
+    """
+    _validar_ventana_de_aviso(anio, mes)
     calculo = calcular_rescision(contrato_id, anio, mes)
 
-    if not rescindir_contrato(contrato_id, calculo["fecha_salida"], calculo["penalidad"]):
+    if not registrar_aviso_rescision(contrato_id, calculo["fecha_salida"]):
         # Se borró entre el cálculo y el update.
         raise_not_found("Contrato", contrato_id)
 
     return calculo
+
+
+def cerrar_por_entrega_llaves(contrato_id: str, fecha_entrega, importe_manual=None) -> dict:
+    """Cierra la rescisión con el alquiler real del mes en que se entregaron las llaves.
+
+    Manda el mes de la entrega, no el que se avisó: en la práctica son el mismo, y si
+    la entrega se corrió a un mes posterior ese mes se paga entero igual.
+    """
+    contrato = get_contrato_by_id(contrato_id)
+    if not contrato:
+        raise_not_found("Contrato", contrato_id)
+
+    if contrato.estado != EstadoContrato.Activo or contrato.fecha_rescision is None:
+        raise_conflict(
+            f"El contrato {contrato_id} no tiene una rescisión pendiente de cierre",
+            field="estado",
+            code="sin_rescision_pendiente",
+        )
+
+    if fecha_entrega < contrato.fecha_inicio:
+        raise_unprocessable(
+            "La entrega de llaves no puede ser anterior al inicio del contrato",
+            field="fecha_entrega",
+            code="entrega_antes_del_inicio",
+        )
+
+    anio, mes = fecha_entrega.year, fecha_entrega.month
+    fecha_salida = date(anio, mes, monthrange(anio, mes)[1])
+    meses_restantes = max(
+        0, (contrato.fecha_fin.year - anio) * 12 + (contrato.fecha_fin.month - mes)
+    )
+
+    tramo = get_importe_vigente_del_mes(contrato_id, fecha_salida)
+    if tramo is None:
+        raise_unprocessable(
+            f"No hay un importe registrado para {mes:02d}/{anio} en el contrato {contrato_id}",
+            field="fecha_entrega",
+            code="sin_importe_vigente",
+        )
+
+    # El tramo no cubre el mes: el ajuste de ese mes no se cargó todavía. Antes que
+    # congelar la penalidad sobre un alquiler viejo, se pide el valor.
+    if tramo["fecha_fin"] < fecha_salida and importe_manual is None:
+        raise_unprocessable(
+            f"No está cargado el alquiler de {mes:02d}/{anio}: indicá el importe "
+            "para poder calcular la penalidad",
+            field="importe_alquiler",
+            code="importe_del_mes_desconocido",
+        )
+
+    calculo = _armar_calculo(contrato, fecha_salida, meses_restantes, tramo, importe_manual)
+
+    if not cerrar_rescision(contrato_id, fecha_entrega, fecha_salida, calculo["penalidad"]):
+        raise_not_found("Contrato", contrato_id)
+
+    return calculo
+
+
+def cancelar_rescision(contrato_id: str) -> None:
+    """Borra un aviso mal cargado. Sin esto solo se arregla por SQL."""
+    contrato = get_contrato_by_id(contrato_id)
+    if not contrato:
+        raise_not_found("Contrato", contrato_id)
+
+    if contrato.estado != EstadoContrato.Activo or contrato.fecha_rescision is None:
+        raise_conflict(
+            f"El contrato {contrato_id} no tiene una rescisión pendiente que cancelar",
+            field="estado",
+            code="sin_rescision_pendiente",
+        )
+
+    if not cancelar_aviso_rescision(contrato_id):
+        raise_not_found("Contrato", contrato_id)
