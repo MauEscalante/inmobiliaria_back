@@ -86,7 +86,7 @@ mysql -u root -p inmobiliaria_db < sql/03_migracion.sql
 
 El seed usa **agosto de 2026** como mes de referencia:
 
-- `GET /recibos/ajustar/8/2026` devuelve 3 contratos (`000001`, `000002`, `000003`).
+- `GET /api/v1/recibos/pendientes?mes=8&anio=2026` devuelve 3 contratos (`000001`, `000002`, `000003`).
 - `000005` es ICL, así que la query de IPC lo descarta.
 - `000006` es un contrato nuevo que todavía no ajusta.
 - La propiedad 3 tiene dos propietarios (60/40) y dos co-inquilinos.
@@ -106,5 +106,7 @@ DATABASE_URL=mysql+pymysql://usuario:password@localhost/inmobiliaria_db
 uvicorn main:app --reload
 ```
 
-Queda en `http://127.0.0.1:8000`, que es adonde apunta el front. Documentación
-interactiva en `/docs`.
+Queda en `http://127.0.0.1:8000`, que es adonde apunta el front. Todo endpoint de
+negocio cuelga de `/api/v1` (`settings.API_PREFIX`), así que la URL completa de una
+colección es `http://127.0.0.1:8000/api/v1/propiedades`. Documentación interactiva
+en `/api/docs`; el chequeo de vida, en `/health`.

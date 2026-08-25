@@ -50,8 +50,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    # Sin esto el navegador no puede leer el Location que devuelven los POST.
-    expose_headers=["Location"],
+    # Sin esto el navegador no puede leer el Location que devuelven los POST ni el
+    # Content-Disposition con el que el front nombra la planilla que descarga.
+    expose_headers=["Location", "Content-Disposition"],
 )
 
 
