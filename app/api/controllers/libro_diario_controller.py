@@ -14,8 +14,13 @@ from app.api.services.libro_diario_service import (
 from app.api.services.propiedades_services import get_inmueble_by_id
 from app.models.libro_diario import CuentaTransferencia, TipoMovimiento
 
-# Ingresos y depósitos son plata de una propiedad, por eso hay que indicar cuál.
+# Ingresos y depósitos pueden ser plata de una propiedad, y ahí el concepto se arma
+# con la dirección.
 TIPOS_CON_PROPIEDAD = ("INGRESO", "DEPOSITO")
+
+# El depósito siempre es el cobro de un alquiler. El efectivo puede no serlo (una seña,
+# una comisión suelta), y ahí el concepto lo escribe el usuario igual que en un egreso.
+TIPOS_QUE_EXIGEN_PROPIEDAD = ("DEPOSITO",)
 
 # Lo que sale de la caja sale en efectivo, así que no puede salir más de lo que hay.
 TIPOS_QUE_SACAN_EFECTIVO = ("EGRESO", "RETIRO")
@@ -125,15 +130,18 @@ def create_new_movimiento(movimiento_data: dict):
     propiedad_id = movimiento_data.get("propiedad_id")
     concepto = (movimiento_data.get("concepto") or "").strip()
 
-    if tipo in TIPOS_CON_PROPIEDAD:
-        if not propiedad_id:
-            raise HTTPException(status_code=400, detail="Indicá la propiedad")
+    if tipo in TIPOS_QUE_EXIGEN_PROPIEDAD and not propiedad_id:
+        raise HTTPException(status_code=400, detail="Indicá la propiedad")
+
+    # Manda si hay propiedad, no el tipo: así el efectivo entra por las dos ramas.
+    if tipo in TIPOS_CON_PROPIEDAD and propiedad_id:
         propiedad = get_inmueble_by_id(propiedad_id)
         if not propiedad:
             raise HTTPException(status_code=404, detail="Propiedad no encontrada")
         concepto = _armar_concepto(propiedad, piso, depto)
     else:
-        # Los egresos y retiros no tienen propiedad: el concepto lo escribe el usuario.
+        # Sin propiedad el concepto lo escribe el usuario: egresos, retiros y los
+        # ingresos en efectivo que no son de un alquiler.
         if not concepto:
             raise HTTPException(status_code=400, detail="El concepto es obligatorio")
         propiedad_id = None
