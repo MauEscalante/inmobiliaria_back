@@ -3,8 +3,8 @@ from sqlalchemy.exc import IntegrityError
 from app.api.errors import raise_conflict, raise_not_found
 from app.api.services.cliente_services import (
     buscar_duplicado,
-    get_clientes,
     get_cliente_by_id,
+    get_clientes,
     patch_cliente,
     update_cliente,
 )

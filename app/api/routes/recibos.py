@@ -10,9 +10,9 @@ from app.api.controllers.recibo_controller import (
     ruta_planilla,
     solicitar_ajuste,
 )
+from app.api.errors import raise_not_found
 from app.api.services.ajuste_service import get_by_id as get_ajuste
 from app.config import settings
-from app.api.errors import raise_not_found
 from app.schemas.common import error_responses
 from app.schemas.recibo import AjusteCreate, AjusteRead, ContratoAAjustar, PlanillaResumen
 

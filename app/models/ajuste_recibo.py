@@ -1,12 +1,13 @@
+from enum import StrEnum
+
 from sqlalchemy import Column, DateTime, Integer, SmallInteger, String
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.sql import func
-from enum import Enum
 
 from app.database.connection import Base
 
 
-class EstadoAjuste(str, Enum):
+class EstadoAjuste(StrEnum):
     pendiente = "pendiente"
     en_proceso = "en_proceso"
     completado = "completado"

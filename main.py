@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -68,7 +68,7 @@ def _envelope(
         error=error,
         message=message,
         details=details,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         path=request.url.path,
     )
     return JSONResponse(status_code=status_code, content=cuerpo.model_dump())
@@ -102,7 +102,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     details = []
     for error in exc.errors():
         # loc viene como ("body", "email"); el primer tramo es de dónde salió.
-        ubicacion = [str(parte) for parte in error["loc"][1:]] or [str(parte) for parte in error["loc"]]
+        ubicacion = ([str(parte) for parte in error["loc"][1:]]
+                     or [str(parte) for parte in error["loc"]])
         details.append({
             "field": ".".join(ubicacion),
             "message": error["msg"],
@@ -111,7 +112,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     return _envelope(
         request,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         error="ValidationError",
         message="Los datos enviados no son válidos",
         details=details,
@@ -126,7 +127,11 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
         status.HTTP_409_CONFLICT,
         error="Conflict",
         message="La operación choca con un dato ya existente",
-        details=[{"field": None, "message": "Violación de una restricción de unicidad o clave foránea", "code": "integrity_error"}],
+        details=[{
+            "field": None,
+            "message": "Violación de una restricción de unicidad o clave foránea",
+            "code": "integrity_error",
+        }],
     )
 
 
@@ -171,5 +176,5 @@ def health():
     return {
         "status": "ok",
         "version": settings.API_VERSION,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }

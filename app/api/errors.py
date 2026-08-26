@@ -20,7 +20,11 @@ def raise_not_found(recurso: str, identificador, *, femenino: bool = False) -> N
         status_code=status.HTTP_404_NOT_FOUND,
         detail=_detalle(
             f"{recurso} no encontrad{terminacion}",
-            [{"field": None, "message": f"No existe {recurso} con id {identificador}", "code": "not_found"}],
+            [{
+                "field": None,
+                "message": f"No existe {recurso} con id {identificador}",
+                "code": "not_found",
+            }],
         ),
     )
 
@@ -39,6 +43,6 @@ def raise_unprocessable(message: str, field: str | None = None, code: str = "inv
     sola (saldo de caja, período cerrado, referencias inexistentes).
     """
     raise HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail=_detalle(message, [{"field": field, "message": message, "code": code}]),
     )

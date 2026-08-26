@@ -1,18 +1,19 @@
+from enum import StrEnum
+
 from sqlalchemy import Column, Date, ForeignKey, Integer, Numeric, String
-from enum import Enum
 from sqlalchemy import Enum as SQLEnum
 
 from app.database.connection import Base
 
 
-class TipoMovimiento (str, Enum):
+class TipoMovimiento(StrEnum):
 	INGRESO="INGRESO"
 	DEPOSITO="DEPOSITO"
 	EGRESO="EGRESO"
 	RETIRO="RETIRO"
 
 
-class CuentaTransferencia (str, Enum):
+class CuentaTransferencia(StrEnum):
 	Kike="Kike"
 	Dai="Dai"
 
