@@ -1,11 +1,12 @@
+from sqlalchemy import text
+
 from app.api.services.cliente_services import find_or_create_cliente
 from app.api.services.evento_service import registrar
+from app.database.connection import SessionLocal
 from app.models.cliente import Cliente, ClienteTipo
 from app.models.evento import TipoEvento
 from app.models.propiedad import EstadoAlquiler, EstadoPropiedad, Propiedad, PropiedadPropietario
-from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
-from sqlalchemy import text
 
 # Campos que el cliente puede setear; el resto (estado inicial, id) lo decide el backend.
 PROPIEDAD_FIELDS = {"direccion", "ambientes"}
@@ -171,7 +172,10 @@ def create_inmueble(propiedad_data: dict) -> dict:
                 if not db.get(Cliente, cliente_num):
                     raise PropietarioInexistenteError(cliente_num)
             else:
-                cliente_num = find_or_create_cliente(db, propietario_data, ClienteTipo.Propietario).cliente_num
+                cliente = find_or_create_cliente(
+                    db, propietario_data, ClienteTipo.Propietario
+                )
+                cliente_num = cliente.cliente_num
 
             db.add(PropiedadPropietario(
                 propiedad_id=propiedad_id,

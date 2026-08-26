@@ -1,10 +1,6 @@
 """Modelos compartidos por todos los recursos: paginación y formato de error."""
 
-from typing import Generic, TypeVar
-
 from pydantic import BaseModel, Field
-
-T = TypeVar("T")
 
 # Coincide con los límites que fija el checklist de la guía de diseño:
 # tamaño por defecto 20, tope 100.
@@ -12,7 +8,7 @@ PAGE_SIZE_DEFAULT = 20
 PAGE_SIZE_MAX = 100
 
 
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     """Página de una colección. Toda colección se devuelve envuelta en esto."""
 
     items: list[T]
@@ -22,7 +18,7 @@ class Page(BaseModel, Generic[T]):
     pages: int = Field(..., description="Cantidad total de páginas")
 
     @classmethod
-    def crear(cls, items: list[T], total: int, page: int, page_size: int) -> "Page[T]":
+    def crear(cls, items: list[T], total: int, page: int, page_size: int) -> Page[T]:
         pages = (total + page_size - 1) // page_size if page_size else 0
         return cls(items=items, total=total, page=page, page_size=page_size, pages=pages)
 

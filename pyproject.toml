@@ -1,0 +1,48 @@
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+# .agents y .claude traen assets de skills que no son código del proyecto.
+exclude = [".venv", "__pycache__", "sql", "templates", ".agents", ".claude"]
+
+[tool.ruff.lint]
+# Sobre las reglas por defecto (E, F) se suman:
+#   I   orden de imports
+#   UP  sintaxis moderna
+#   B   bugbear, errores sutiles
+#   ARG argumentos declarados y nunca usados
+select = ["E", "F", "I", "UP", "B", "ARG"]
+
+[tool.ruff.lint.per-file-ignores]
+# Las rutas declaran los defaults de FastAPI con Depends()/Query() en la firma,
+# que es el patrón del framework y no una llamada en el default.
+"app/api/routes/*.py" = ["B008"]
+"app/utils/helpers.py" = ["B008"]
+
+# Los imports "sin usar" de estos dos archivos son deliberados: registran los
+# modelos en el metadata de SQLAlchemy (lo necesita Alembic) y re-exportan la
+# API del paquete. Borrarlos rompe las migraciones.
+"app/models/__init__.py" = ["F401"]
+"app/database/base.py" = ["F401"]
+
+# `app` en el lifespan y `exc` en los exception handlers los exige la firma que
+# espera FastAPI, aunque el cuerpo no los use.
+"main.py" = ["ARG001"]
+
+[tool.mypy]
+python_version = "3.14"
+# app/ no tiene __init__.py (funciona como namespace package). Sin esto mypy
+# resuelve app/api/routes como "api.routes" y "app.api.routes" a la vez y corta.
+mypy_path = "."
+explicit_package_bases = true
+# Primera pasada sobre código sin anotar: el objetivo es un informe leíble, no
+# el modo estricto. Se puede endurecer una vez que esto esté en verde.
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = ["^\\.venv/", "^tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# El proyecto no se instala como paquete: esto hace que `import main` y
+# `import app...` resuelvan desde la raíz del repo.
+pythonpath = ["."]

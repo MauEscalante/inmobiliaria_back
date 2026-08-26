@@ -4,10 +4,11 @@ El estado vive en la base y no en memoria a proposito: `uvicorn --reload` reinic
 el proceso con cada cambio, y un trabajo en curso se perderia sin dejar rastro.
 """
 
+from sqlalchemy import text
+
 from app.database.connection import SessionLocal
 from app.models.ajuste_recibo import EstadoAjuste
 from app.utils.helpers import serializar_fila
-from sqlalchemy import text
 
 AJUSTE_SELECT = """
     SELECT ajuste_id, mes, anio, estado, contratos_ajustados,

@@ -3,11 +3,11 @@ from datetime import date
 import requests
 from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
+from sqlalchemy import text
 
 from app.config import settings
 from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
-from sqlalchemy import text
 
 MESES = {
     1: "Enero",
@@ -81,7 +81,9 @@ def nombres_de_hojas() -> list[str]:
         wb.close()
 
 
-def actualizar_fechas(recibo: str, mes_liquidacion: int, anio_liquidacion: int, wb: Workbook) -> None:
+def actualizar_fechas(
+    recibo: str, mes_liquidacion: int, anio_liquidacion: int, wb: Workbook
+) -> None:
     ws = wb[recibo]
     # cambia la fecha del recibo y el mes
     ws["I13"].value = mes_liquidacion

@@ -6,7 +6,7 @@ from app.api.controllers.cliente_controller import (
     patch_cliente_parcial,
     update_cliente_completo,
 )
-from app.schemas.cliente import ClienteRead, ClientePatch, ClienteTipoDerivado, ClienteUpdate
+from app.schemas.cliente import ClientePatch, ClienteRead, ClienteTipoDerivado, ClienteUpdate
 from app.schemas.common import Page, error_responses
 from app.utils.helpers import Paginacion
 
@@ -27,14 +27,18 @@ def listar_clientes(
         None,
         description="Filtra por rol. 'Propietario' e 'Inquilino' incluyen a los que son ambos.",
     ),
-    q: str | None = Query(None, max_length=100, description="Busca en nombre, apellido, DNI y email"),
+    q: str | None = Query(
+        None, max_length=100, description="Busca en nombre, apellido, DNI y email"
+    ),
 ):
     """Colección de clientes, paginada y filtrable.
 
     Con `?tipo=Propietario` reemplaza al viejo endpoint `/propietarios`, que era
     esta misma colección con el filtro fijo en la URL.
     """
-    items, total = get_all_clientes(tipo.value if tipo else None, q, paginacion.limit, paginacion.offset)
+    items, total = get_all_clientes(
+        tipo.value if tipo else None, q, paginacion.limit, paginacion.offset
+    )
     return Page.crear(items, total, paginacion.page, paginacion.page_size)
 
 

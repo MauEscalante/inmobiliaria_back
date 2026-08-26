@@ -1,12 +1,15 @@
-from app.api.services.evento_service import registrar
-from app.models.cliente import Cliente, ClienteTipo
-from app.models.evento import TipoEvento
-from app.database.connection import SessionLocal
-from app.utils.helpers import serializar_fila
 from sqlalchemy import text
 
+from app.api.services.evento_service import registrar
+from app.database.connection import SessionLocal
+from app.models.cliente import Cliente, ClienteTipo
+from app.models.evento import TipoEvento
+from app.utils.helpers import serializar_fila
+
 # Campos que la edición puede tocar. El tipo no está: se deriva de las relaciones.
-CLIENTE_FIELDS = ("nombre", "apellido", "dni", "telefono", "email", "direccion", "cuil", "nacionalidad")
+CLIENTE_FIELDS = (
+    "nombre", "apellido", "dni", "telefono", "email", "direccion", "cuil", "nacionalidad",
+)
 
 # El tipo del cliente se deriva de dónde aparece: si tiene propiedades es Propietario,
 # si tiene contratos es Inquilino, y puede ser las dos cosas a la vez. La columna
@@ -68,7 +71,8 @@ def _filtros(tipo: str | None, q: str | None) -> tuple[str, dict]:
 
 
 def find_or_create_cliente(db, cliente_data: dict, tipo: ClienteTipo) -> Cliente:
-    """Busca un cliente por DNI dentro de la sesión dada; si no existe, lo crea con el tipo indicado."""
+    """Busca un cliente por DNI en la sesión dada; si no existe, lo crea con el tipo
+    indicado."""
     dni = (cliente_data.get("dni") or "").strip()
 
     cliente = None
@@ -149,7 +153,10 @@ def buscar_duplicado(cliente_id: int, dni: str, email: str) -> str:
     try:
         if dni:
             existe = db.execute(
-                text("SELECT 1 FROM cliente WHERE dni = :dni AND cliente_num <> :cliente_id LIMIT 1"),
+                text(
+                    "SELECT 1 FROM cliente"
+                    " WHERE dni = :dni AND cliente_num <> :cliente_id LIMIT 1"
+                ),
                 {"dni": dni, "cliente_id": cliente_id},
             ).first()
             if existe:
@@ -157,7 +164,10 @@ def buscar_duplicado(cliente_id: int, dni: str, email: str) -> str:
 
         if email:
             existe = db.execute(
-                text("SELECT 1 FROM cliente WHERE email = :email AND cliente_num <> :cliente_id LIMIT 1"),
+                text(
+                    "SELECT 1 FROM cliente"
+                    " WHERE email = :email AND cliente_num <> :cliente_id LIMIT 1"
+                ),
                 {"email": email, "cliente_id": cliente_id},
             ).first()
             if existe:

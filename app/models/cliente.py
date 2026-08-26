@@ -1,12 +1,13 @@
+from enum import StrEnum
+
 from sqlalchemy import Column, Integer, String
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import relationship
-from enum import Enum
 
 from app.database.connection import Base
 
 
-class ClienteTipo(str, Enum):
+class ClienteTipo(StrEnum):
 	Inquilino = "Inquilino"
 	Propietario = "Propietario"
 
@@ -25,5 +26,9 @@ class Cliente(Base):
 	nacionalidad = Column(String(50), nullable=True)
 	tipo = Column(SQLEnum(ClienteTipo), nullable=True)
 
-	propiedades = relationship("PropiedadPropietario", back_populates="cliente", cascade="all, delete-orphan")
-	contratos = relationship("ContratoInquilino", back_populates="cliente", cascade="all, delete-orphan")
+	propiedades = relationship(
+		"PropiedadPropietario", back_populates="cliente", cascade="all, delete-orphan"
+	)
+	contratos = relationship(
+		"ContratoInquilino", back_populates="cliente", cascade="all, delete-orphan"
+	)
