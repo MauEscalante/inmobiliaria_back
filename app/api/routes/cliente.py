@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.controllers.cliente_controller import get_all_clientes, get_cliente, create_new_cliente, update_email, update_telefono
+from app.api.controllers.cliente_controller import get_all_clientes, get_cliente, get_historial_cliente, create_new_cliente, update_email, update_telefono
 
 
 router = APIRouter(prefix="/clientes", tags=["inquilinos"])
@@ -7,6 +7,11 @@ router = APIRouter(prefix="/clientes", tags=["inquilinos"])
 @router.get("/")
 async def get_inquilinos():
     return get_all_clientes()
+
+# Va antes que /{id} para que el path param no se coma el segmento.
+@router.get("/{id}/historial")
+async def get_inquilino_historial(id: int):
+    return get_historial_cliente(id)
 
 @router.get("/{id}")
 async def get_inquilino(id: int):

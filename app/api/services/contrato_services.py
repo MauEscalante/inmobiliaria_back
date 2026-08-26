@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from app.models.contrato import Contrato, ContratoInquilino
 from app.models.cliente import ClienteTipo
 from app.api.services.cliente_services import find_or_create_cliente
@@ -108,6 +110,72 @@ def get_contrato_detalle(id: int):
             "periodicidad": contrato["periodicidad"],
             "estado": contrato["estado"],
         }
+    finally:
+        db.close()
+
+def _fusionar_vigencias(filas: list) -> list:
+    """Junta renglones consecutivos del mismo contrato que repiten el importe.
+
+    `valor_historico` guarda un renglón por mes, así que un alquiler que estuvo
+    cuatro meses sin ajustarse ocupa cuatro filas idénticas salvo por las fechas.
+    Lo que interesa es cuándo cambió el importe, no cuántos meses aguantó: la racha
+    se colapsa en un solo período, del primer `fecha_inicio` al último `fecha_fin`.
+
+    Un hueco entre un renglón y el siguiente corta la racha aunque el importe
+    coincida: son dos vigencias distintas, no una.
+
+    Espera las filas ordenadas por contrato y `fecha_inicio` ascendente.
+    """
+    vigencias = []
+    for fila in filas:
+        anterior = vigencias[-1] if vigencias else None
+        sigue_la_racha = (
+            anterior is not None
+            and anterior["contrato"] == fila["contrato"]
+            and anterior["importe_inicial"] == fila["importe_inicial"]
+            and fila["fecha_inicio"] == anterior["fecha_fin"] + timedelta(days=1)
+        )
+        if sigue_la_racha:
+            anterior["fecha_fin"] = fila["fecha_fin"]
+        else:
+            vigencias.append(dict(fila))
+    return vigencias
+
+
+def get_valores_historicos_por_cliente(cliente_id: int) -> list:
+    """Historial de importes de los contratos ligados a un cliente.
+
+    Un cliente llega a un contrato por dos caminos: como inquilino, por
+    `contrato_inquilino`; como propietario, por la propiedad del contrato. Los
+    meses que comparten importe se devuelven como un solo período, así que la
+    lista queda con un renglón por ajuste.
+    """
+    db = SessionLocal()
+    try:
+        query = text("""
+            SELECT vh.contrato, vh.fecha_inicio, vh.fecha_fin, vh.importe_inicial,
+                   p.direccion
+            FROM valor_historico vh
+            JOIN contrato c ON c.contrato_id = vh.contrato
+            JOIN propiedad p ON p.propiedad_id = c.propiedad
+            WHERE vh.contrato IN (
+                    SELECT ci.contrato
+                    FROM contrato_inquilino ci
+                    WHERE ci.cliente = :cliente_id
+                UNION
+                    SELECT c2.contrato_id
+                    FROM contrato c2
+                    JOIN propiedad_propietario pp ON pp.propiedad_id = c2.propiedad
+                    WHERE pp.cliente = :cliente_id
+            )
+            ORDER BY vh.contrato, vh.fecha_inicio
+        """)
+        filas = [dict(row) for row in db.execute(query, {"cliente_id": cliente_id}).mappings().all()]
+        vigencias = _fusionar_vigencias(filas)
+        # La consulta ordena por contrato para poder fusionar; la pantalla quiere lo
+        # más reciente arriba.
+        vigencias.sort(key=lambda vigencia: vigencia["fecha_inicio"], reverse=True)
+        return vigencias
     finally:
         db.close()
 
