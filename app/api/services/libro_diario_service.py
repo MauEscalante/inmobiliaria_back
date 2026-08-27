@@ -1,6 +1,7 @@
+from sqlalchemy import text
+
 from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
-from sqlalchemy import text
 
 # Nombres de mes en español para el historial que consume la pantalla de Recibos.
 MESES = [
@@ -140,7 +141,8 @@ def create_movimiento(movimiento_data: dict) -> dict:
     db = SessionLocal()
     try:
         query = text("""
-            INSERT INTO libroDiario (fecha, propiedad_id, piso, depto, concepto, monto, tipo, cuenta)
+            INSERT INTO libroDiario
+                (fecha, propiedad_id, piso, depto, concepto, monto, tipo, cuenta)
             VALUES (:fecha, :propiedad_id, :piso, :depto, :concepto, :monto, :tipo, :cuenta)
         """)
         resultado = db.execute(query, {
@@ -155,9 +157,13 @@ def create_movimiento(movimiento_data: dict) -> dict:
         })
         movimiento_id = resultado.lastrowid
 
-        if movimiento_data.get("tipo") in ("INGRESO", "DEPOSITO") and movimiento_data.get("propiedad_id"):
+        if (movimiento_data.get("tipo") in ("INGRESO", "DEPOSITO")
+                and movimiento_data.get("propiedad_id")):
             db.execute(
-                text("UPDATE propiedad SET estado_alquiler = 'Abono' WHERE propiedad_id = :propiedad_id"),
+                text(
+                    "UPDATE propiedad SET estado_alquiler = 'Abono'"
+                    " WHERE propiedad_id = :propiedad_id"
+                ),
                 {"propiedad_id": movimiento_data.get("propiedad_id")},
             )
 

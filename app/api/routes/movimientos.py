@@ -31,7 +31,11 @@ def listar_movimientos(
         None, description="Se puede repetir: ?tipo=INGRESO&tipo=DEPOSITO"
     ),
     sort: str | None = Query(
-        None, description="Campo de orden: fecha, monto o movimiento_id. Con '-' adelante es descendente.",
+        None,
+        description=(
+            "Campo de orden: fecha, monto o movimiento_id. "
+            "Con '-' adelante es descendente."
+        ),
     ),
 ):
     """Colección de movimientos, filtrable por período y por tipo.
@@ -61,7 +65,8 @@ def listar_movimientos(
 def crear_movimiento(datos: MovimientoCreate, response: Response):
     """Registra el movimiento y, en ingresos y depósitos, marca la propiedad como abonada."""
     movimiento = create_new_movimiento(datos.model_dump())
-    response.headers["Location"] = f"{settings.API_PREFIX}/movimientos/{movimiento['movimiento_id']}"
+    movimiento_id = movimiento["movimiento_id"]
+    response.headers["Location"] = f"{settings.API_PREFIX}/movimientos/{movimiento_id}"
     return movimiento
 
 

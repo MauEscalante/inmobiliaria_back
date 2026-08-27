@@ -17,7 +17,9 @@ class ValorHistorico(Base):
 
 	# La columna se llama `contrato` en la tabla, igual que en contrato_inquilino;
 	# el atributo va con otro nombre para no chocar con la relación.
-	contrato_id = Column("contrato", String(10), ForeignKey("contrato.contrato_id"), primary_key=True)
+	contrato_id = Column(
+		"contrato", String(10), ForeignKey("contrato.contrato_id"), primary_key=True
+	)
 	# La PK es compuesta (contrato, fecha_inicio): un contrato tiene un tramo por ajuste.
 	fecha_inicio = Column(Date, primary_key=True)
 	fecha_fin = Column(Date, nullable=False)

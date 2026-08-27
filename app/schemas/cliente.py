@@ -9,7 +9,7 @@ porque Pydantic v2 serializa Decimal como string en JSON y el cliente espera
 un número.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.validators import EMAIL_PATTERN
 
 
-class ClienteTipoDerivado(str, Enum):
+class ClienteTipoDerivado(StrEnum):
     """El tipo no se guarda: se deriva de las relaciones, y puede ser las dos cosas."""
 
     Inquilino = "Inquilino"

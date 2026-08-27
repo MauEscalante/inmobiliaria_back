@@ -1,0 +1,89 @@
+# Herramientas de desarrollo. Aparte de requirements.txt para no llevarlas al deploy.
+#
+#   .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+#
+# ---------------------------------------------------------------------------
+# CÓMO CORRER LOS CHEQUEOS
+# ---------------------------------------------------------------------------
+# Desde la raíz del repo (inmobiliaria_back/), con la venv del proyecto:
+#
+#   .venv\Scripts\python.exe -m pytest              # los 55 tests
+#   .venv\Scripts\python.exe -m pytest -v           # uno por línea, con su nombre
+#   .venv\Scripts\python.exe -m ruff check .        # linter
+#   .venv\Scripts\python.exe -m ruff check . --fix  # aplica lo autocorregible
+#   .venv\Scripts\python.exe -m mypy app main.py    # chequeo de tipos
+#
+# Correr un archivo suelto, o un solo test:
+#
+#   .venv\Scripts\python.exe -m pytest tests/test_schemas.py
+#   .venv\Scripts\python.exe -m pytest -k "garantia"
+#
+# LOS TESTS NO NECESITAN MYSQL. Podés comprobarlo apuntando a una base que no
+# existe: tienen que pasar igual.
+#
+#   set DATABASE_URL=mysql+pymysql://x:x@127.0.0.1:9999/nada
+#   .venv\Scripts\python.exe -m pytest
+#
+# ---------------------------------------------------------------------------
+# QUÉ CUBRE CADA ARCHIVO
+# ---------------------------------------------------------------------------
+# tests/conftest.py
+#   La fixture `client`. Arma el TestClient SIN usarlo como context manager, a
+#   propósito: el lifespan de main.py llama a limpiar_interrumpidos(), que sí
+#   pega contra MySQL. Si alguien lo cambia a `with TestClient(app)`, toda la
+#   suite pasa a exigir base de datos.
+#
+# tests/test_helpers.py      (12 tests) — lógica pura, sin la app
+#   Page.crear        cuántas páginas salen de un total (división exacta, con
+#                     resto, colección vacía, y el guard de page_size=0).
+#   Paginacion        que limit sea page_size y offset saltee las páginas
+#                     anteriores (página 1 -> offset 0).
+#   serializar_fila   Decimal -> float y fechas -> ISO, que es lo que el
+#                     cliente espera recibir en el JSON.
+#
+# tests/test_schemas.py      (31 tests) — las reglas de negocio de los schemas
+#   Contrato          fecha_fin tiene que ser posterior a fecha_inicio;
+#                     GPremier no lleva garantes y la garantía "Garantes"
+#                     exige al menos uno; importe positivo; mínimo un inquilino.
+#   Movimiento        ingresos y depósitos necesitan propiedad_id; egresos y
+#                     retiros necesitan concepto; un depósito necesita cuenta.
+#   AjusteCreate      mes 1-12 y año 1900-2100.
+#   ClienteUpdate     el patrón de email, y los largos de columna (nombre
+#                     entra en varchar(15)).
+#
+# tests/test_api_contrato.py (12 tests) — el contrato HTTP, vía TestClient
+#   Es la forma exacta que consume el front: mensajeDeError() en
+#   Uzquiza-front/src/services/api.ts lee `message` y `details[].field`.
+#   /health           responde 200.
+#   Envelope de 404   una ruta inexistente sale con error/message/details/
+#                     timestamp/path, no con el {"detail": ...} de Starlette.
+#                     Incluye el caso /propiedades/ sin el prefijo /api/v1,
+#                     que es el 404 que rompía el front.
+#   Validación 422    de query (mes fuera de rango, falta un obligatorio,
+#                     page_size por encima del tope) y de body (vacío, fechas
+#                     incoherentes), verificando que `details[].field` nombre
+#                     el campo que falló.
+#   405               POST /clientes no existe: los clientes se crean solos.
+#
+# Ninguno toca MySQL: las validaciones de Pydantic y de Query cortan antes de
+# que el handler llame a un service, y el 404 lo resuelve el router.
+
+ruff==0.16.4
+mypy==2.3.1
+pytest==9.1.1
+
+# Lo usa el TestClient de FastAPI: sin esto no corren los tests de endpoints.
+# Starlette lo elige solo (intenta `import httpx2` antes que `import httpx`);
+# con el httpx viejo funcionaba igual pero avisaba que estaba deprecado.
+httpx2==2.12.0
+
+# Ruff
+#   .venv\Scripts\python.exe -m ruff check .                      # todo, con contexto
+#   .venv\Scripts\python.exe -m ruff check . --statistics         # resumen por regla
+#   .venv\Scripts\python.exe -m ruff check . --output-format concise   # una línea por error
+#   .venv\Scripts\python.exe -m ruff check . --select UP042       # filtrar una sola regla
+#   .venv\Scripts\python.exe -m ruff rule UP042                   # qué es y cómo se arregla
+
+# Mypy
+#   .venv\Scripts\python.exe -m mypy app main.py --pretty         # con el código señalado
+#   .venv\Scripts\python.exe -m mypy app/api/services             # una carpeta sola

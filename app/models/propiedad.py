@@ -1,17 +1,18 @@
+from enum import StrEnum
+
 from sqlalchemy import Column, ForeignKey, Integer, Numeric, String
-from sqlalchemy.orm import relationship
-from enum import Enum
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.orm import relationship
 
 from app.database.connection import Base
 
 
-class EstadoPropiedad (str, Enum):
+class EstadoPropiedad(StrEnum):
 	Activa="Activa"
 	Inactiva="Inactiva"
 
 
-class EstadoAlquiler (str, Enum):
+class EstadoAlquiler(StrEnum):
 	Abono="Abono"
 	Adeuda="Adeuda"
 
@@ -22,11 +23,21 @@ class Propiedad(Base):
 	propiedad_id = Column(Integer, primary_key=True, index=True)
 	direccion = Column(String(255), nullable=False)
 	ambientes = Column(Integer, nullable=True)
-	estado = Column(SQLEnum(EstadoPropiedad), nullable=False, server_default=EstadoPropiedad.Activa.value)
-	estado_alquiler = Column(SQLEnum(EstadoAlquiler), nullable=False, server_default=EstadoAlquiler.Adeuda.value)
+	estado = Column(
+		SQLEnum(EstadoPropiedad), nullable=False,
+		server_default=EstadoPropiedad.Activa.value,
+	)
+	estado_alquiler = Column(
+		SQLEnum(EstadoAlquiler), nullable=False,
+		server_default=EstadoAlquiler.Adeuda.value,
+	)
 
-	propietarios = relationship("PropiedadPropietario", back_populates="propiedad", cascade="all, delete-orphan")
-	contratos = relationship("Contrato", back_populates="propiedad_obj", cascade="all, delete-orphan")
+	propietarios = relationship(
+		"PropiedadPropietario", back_populates="propiedad", cascade="all, delete-orphan"
+	)
+	contratos = relationship(
+		"Contrato", back_populates="propiedad_obj", cascade="all, delete-orphan"
+	)
 
 
 class PropiedadPropietario(Base):

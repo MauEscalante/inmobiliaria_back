@@ -10,6 +10,7 @@ from datetime import date
 from sqlalchemy import text
 
 from app.database.connection import SessionLocal
+
 # Las consultas van en SQL crudo, pero importar el modelo acá lo registra en el
 # mapper: Contrato lo referencia por nombre y falla si nadie lo cargó todavía.
 from app.models.valor_historico import ValorHistorico  # noqa: F401

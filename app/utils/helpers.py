@@ -61,7 +61,3 @@ def contar(db, from_where_sql: str, params: dict) -> int:
     """Total de filas que matchean, para calcular la cantidad de páginas."""
     return db.execute(text(f"SELECT COUNT(*) FROM {from_where_sql}"), params).scalar() or 0
 
-
-def aplicar_paginado(sql: str, limit: int, offset: int) -> str:
-    """Agrega LIMIT/OFFSET. Los valores van como parámetros, no interpolados."""
-    return f"{sql} LIMIT :_limit OFFSET :_offset"

@@ -5,7 +5,7 @@ se puede saber en qué orden se cargaron las cosas, nunca cuándo. Cada fila que
 escrita en la misma transacción que el alta que la origina.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 from sqlalchemy import Column, DateTime, Integer, String
 from sqlalchemy.sql import func
@@ -13,7 +13,7 @@ from sqlalchemy.sql import func
 from app.database.connection import Base
 
 
-class TipoEvento(str, Enum):
+class TipoEvento(StrEnum):
     contrato_creado = "contrato_creado"
     contrato_rescindido = "contrato_rescindido"
     propiedad_creada = "propiedad_creada"

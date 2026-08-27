@@ -1,14 +1,15 @@
-from app.models.contrato import Contrato, ContratoInquilino, EstadoContrato
-from app.models.cliente import ClienteTipo
+from sqlalchemy import text
+
 from app.api.services.cliente_services import find_or_create_cliente
 from app.api.services.evento_service import registrar
 from app.api.services.garante_services import crear_garante
 from app.api.services.valor_historico_service import sembrar_tramo_inicial
+from app.database.connection import SessionLocal
+from app.models.cliente import ClienteTipo
+from app.models.contrato import Contrato, ContratoInquilino, EstadoContrato
 from app.models.evento import TipoEvento
 from app.models.propiedad import Propiedad
-from app.database.connection import SessionLocal
 from app.utils.helpers import serializar_fila
-from sqlalchemy import text
 
 # Campos que pertenecen realmente a la tabla contrato; el resto (p. ej. inquilinos)
 # se maneja aparte para no intentar setearlos como columnas.
@@ -189,7 +190,9 @@ def crear_contrato(contrato_data: dict):
 
         for inquilino_data in inquilinos_data:
             cliente = find_or_create_cliente(db, inquilino_data, ClienteTipo.Inquilino)
-            db.add(ContratoInquilino(contrato_id=contrato.contrato_id, cliente_num=cliente.cliente_num))
+            db.add(ContratoInquilino(
+                contrato_id=contrato.contrato_id, cliente_num=cliente.cliente_num,
+            ))
 
         for garante_data in contrato_data.get("garantes") or []:
             crear_garante(db, garante_data, contrato.contrato_id)
