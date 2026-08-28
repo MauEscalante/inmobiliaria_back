@@ -75,3 +75,8 @@ class ClienteRead(BaseModel):
     comision: float | None = Field(
         None, description="Comisión del propietario. Null si el cliente no es propietario."
     )
+    direccion_propiedades: str | None = Field(
+        None,
+        description="Direcciones de las propiedades del propietario, separadas por ', '. "
+                    "Null si el cliente no es propietario.",
+    )

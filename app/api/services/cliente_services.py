@@ -25,7 +25,14 @@ CLIENTE_SELECT = """
       END AS tipo,
       (SELECT MAX(ppc.comision)
          FROM propiedad_propietario ppc
-        WHERE ppc.cliente = c.cliente_num) AS comision
+        WHERE ppc.cliente = c.cliente_num) AS comision,
+      -- Un propietario puede tener varias propiedades: se concatenan para que entren
+      -- en una sola celda de la tabla. DISTINCT porque la misma dirección puede
+      -- repetirse entre propiedades distintas.
+      (SELECT GROUP_CONCAT(DISTINCT pr.direccion ORDER BY pr.direccion SEPARATOR ', ')
+         FROM propiedad_propietario ppd
+         JOIN propiedad pr ON pr.propiedad_id = ppd.propiedad_id
+        WHERE ppd.cliente = c.cliente_num) AS direccion_propiedades
     FROM cliente c
     LEFT JOIN (SELECT cliente, COUNT(*) n FROM propiedad_propietario GROUP BY cliente) pp
            ON pp.cliente = c.cliente_num
