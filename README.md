@@ -1,260 +1,112 @@
-PARA CREAR LA DB:
-DROP DATABASE inmobiliaria_db;
+# Inmobiliaria — Backend
 
-CREATE DATABASE inmobiliaria_db;
+API de administración de alquileres. FastAPI + SQLAlchemy sobre MySQL.
 
-USE inmobiliaria_db;
+## Base de datos
 
+El esquema vive en `sql/`. **Es la única fuente de verdad**: si cambiás un modelo
+en `app/models/`, actualizá también el DDL.
 
-CREATE TABLE  propiedad  (
-   propiedad_id  int NOT NULL AUTO_increment,
-   direccion  varchar(25) NOT NULL,
-   ambientes int ,
-   estado ENUM('Activa','Inactiva') NOT NULL DEFAULT 'Activa',
-   estado_alquiler ENUM('Abono','Adeuda') NOT NULL DEFAULT 'Adeuda',
-  PRIMARY KEY ( propiedad_id )
-);
+```
+sql/01_schema.sql   estructura (borra y recrea inmobiliaria_db)
+sql/02_seed.sql     datos de prueba
+```
 
--- concepto se guarda desnormalizado ("Cotagaita 786 3° B") para que la fila siga
--- siendo legible aunque la propiedad cambie de dirección.
--- piso y depto son del movimiento: aclaran a qué unidad corresponde el pago.
--- cuenta indica a qué cuenta se transfirió; es obligatoria en los DEPOSITO.
-create table libroDiario(
-	movimiento_id INT NOT NULL AUTO_INCREMENT,
-    fecha DATE NOT NULL,
-    propiedad_id INT NULL,
-    piso VARCHAR(10) NULL,
-    depto VARCHAR(10) NULL,
-    concepto VARCHAR(150) NOT NULL,
-    monto DECIMAL(12,2) NOT NULL,
-    tipo ENUM('INGRESO', 'DEPOSITO', 'EGRESO', 'RETIRO') NOT NULL,
-    cuenta ENUM('Kike', 'Dai') NULL,
+### Crear la base desde cero
 
-    PRIMARY KEY (movimiento_id),
-    KEY idx_librodiario_fecha (fecha),
-    CONSTRAINT fk_librodiario_propiedad FOREIGN KEY (propiedad_id) REFERENCES propiedad(propiedad_id)
-);
+```bash
+mysql -u root -p < sql/01_schema.sql
+mysql -u root -p inmobiliaria_db < sql/02_seed.sql
+```
 
-CREATE TABLE cliente (
-  cliente_num int NOT NULL AUTO_INCREMENT,
-   nombre  varchar(15) NOT NULL,
-   apellido  varchar(15) NOT NULL,
-   dni  varchar(9) NOT NULL,
-   telefono  varchar(10) NOT NULL,
-  PRIMARY KEY ( cliente_num )
-);
-CREATE TABLE  contrato  (
-   contrato_id  varchar(10) NOT NULL ,
-   propiedad  int DEFAULT NULL,
-   fecha_inicio  date DEFAULT NULL,
-   fecha_fin  date DEFAULT NULL,
-   tipo_ajuste  varchar(3) DEFAULT NULL, #deberia ser un enum con IPC ICL
-   periodicidad  int DEFAULT NULL,
-   importe_inicial  decimal(12,2) NOT NULL,
-  PRIMARY KEY ( contrato_id ),
-  KEY  propiedad  ( propiedad ),
-  CONSTRAINT  contrato_ibfk_1  FOREIGN KEY ( propiedad ) REFERENCES  propiedad  ( propiedad_id )
-);
+`01_schema.sql` arranca con `DROP DATABASE IF EXISTS inmobiliaria_db`, así que
+borra todo lo que haya. `02_seed.sql` trunca las tablas antes de insertar, por
+lo que se puede volver a correr solo para dejar los datos de prueba como estaban.
 
-CREATE TABLE valor_historico(
-	contrato varchar(10) NOT NULL,
-    importe_inicial  decimal(12,2) NOT NULL,
-    fecha_inicio date not null,
-    fecha_fin date not null,
-    PRIMARY KEY (contrato,fecha_inicio),
-    foreign key (contrato) REFERENCES contrato(contrato_id)
-);
+### Tablas
 
-CREATE TABLE  contrato_inquilino  (
-   contrato  varchar(10) NOT NULL,
-   cliente  int NOT NULL,
-  PRIMARY KEY ( contrato , cliente ),
-  KEY  fk_contrato_inquilino_cliente  ( cliente ),
-  CONSTRAINT  contrato_inquilino_ibfk_1  FOREIGN KEY ( contrato ) REFERENCES  contrato  ( contrato_id ),
-  CONSTRAINT  fk_contrato_inquilino_cliente  FOREIGN KEY ( cliente ) REFERENCES  cliente  ( cliente_num )
-) ;
+| Tabla | Para qué |
+|---|---|
+| `cliente` | Propietarios e inquilinos, discriminados por `tipo`. Los garantes no van acá. |
+| `propiedad` | Inmuebles administrados, con estado y semáforo de cobranza. |
+| `propiedad_propietario` | N:N propiedad ↔ propietarios, con `comision` y `porcentaje` de reparto. |
+| `contrato` | Contrato de alquiler: vigencia, importe, tipo de ajuste, periodicidad y garantía. |
+| `contrato_inquilino` | N:N contrato ↔ inquilinos (admite co-inquilinos). |
+| `garante` | Garantes del contrato. El tipo lo determina `contrato.garantia`. |
+| `valor_historico` | Historial de importes: una fila por período entre ajustes. |
+| `libroDiario` | Ingresos, egresos, depósitos y retiros de la inmobiliaria. |
+| `evento` | Bitácora de altas para el panel de actividad reciente. |
+| `ajuste_recibo` | Trabajos de ajuste de recibos: estado y resultado de cada corrida. |
 
--- comision: comisión del propietario. Es siempre la misma en todas las propiedades que tiene.
--- porcentaje: qué parte de esa comisión le corresponde cuando la propiedad tiene más de un propietario.
-CREATE TABLE  propiedad_propietario  (
-   propiedad_id  int NOT NULL AUTO_INCREMENT,
-   cliente  int NOT NULL,
-   porcentaje  decimal(5,2) NOT NULL,
-   comision  int NOT NULL,
-  PRIMARY KEY ( propiedad_id , cliente ),
-  KEY  fk_propiedad_propietario_cliente  ( cliente ),
-  CONSTRAINT  fk_propiedad_propietario_cliente  FOREIGN KEY ( cliente ) REFERENCES  cliente  ( cliente_num ),
-  CONSTRAINT  propiedad_propietario_ibfk_2  FOREIGN KEY ( propiedad_id ) REFERENCES  propiedad  ( propiedad_id )
-); 
+Varias de estas tablas se consultan por SQL crudo desde `app/api/services/`
+aunque tengan modelo en `app/models/`.
 
+### Verificar que el DDL y los modelos coincidan
 
-INSERT DE PRUEBA 
+El `import app.models` es lo que registra los modelos en el metadata: si se
+importa solo alguno, las tablas que falten no se chequean y el drift pasa
+desapercibido.
 
+```bash
+python -c "
+from sqlalchemy import inspect
+from app.database.connection import Base, engine
+import app.models
+insp = inspect(engine)
+vivas = {t.lower() for t in insp.get_table_names()}
+for t in Base.metadata.sorted_tables:
+    if t.name.lower() not in vivas:
+        print(t.name, 'AUSENTE en la base')
+        continue
+    reales = {c['name'] for c in insp.get_columns(t.name)}
+    faltan = {c.name for c in t.columns} - reales
+    sobran = reales - {c.name for c in t.columns}
+    detalle = 'faltan=%s sobran=%s' % (sorted(faltan), sorted(sobran))
+    print(t.name, 'OK' if not (faltan or sobran) else detalle)
+"
+```
 
-INSERT INTO cliente (nombre, apellido, dni, telefono) VALUES
-('Juan','Perez','30111222','1122334455'),
-('Maria','Gomez','27888999','1133445566'),
-('Carlos','Lopez','32555111','1144556677'),
-('Lucia','Fernandez','33444555','1155667788'),
-('Pedro','Martinez','28999111','1166778899'),
-('Ana','Suarez','35666777','1177889900'),
-('Diego','Romero','31222333','1188990011'),
-('Sofia','Diaz','29888777','1199001122'),
-('Martin','Castro','34111555','1111223344'),
-('Carla','Ruiz','36777888','1122446688'),
-('Nicolas','Alvarez','31888444','1133557799'),
-('Valeria','Molina','29999555','1144668800');
+Si aparece algo `AUSENTE`, la base viene de una versión anterior: correr
+`sql/03_migracion.sql` (ver más abajo).
 
-INSERT INTO propiedad (direccion, ambientes) VALUES
-('Av. Mitre 100', 3),
-('Belgrano 250', 2),
-('Rivadavia 330', 4),
-('Sarmiento 120', 2),
-('San Martin 450', 3),
-('Italia 890', 5);
+### Migrar una base ya existente
 
-INSERT INTO propiedad_propietario
-(propiedad_id, cliente, porcentaje, comision)
-VALUES
-(1,1,100,6),
-(2,2,100,6),
-(3,3,100,6),
-(4,4,100,6),
-(5,5,100,6),
-(6,6,100,6);
+Si la base viene de una versión anterior y no se puede recrear, `sql/03_migracion.sql`
+la pone al día sin borrar datos: estado de alquiler, columnas nuevas de
+`libroDiario`, `evento` y `ajuste_recibo`. No hace falta si se corre `01_schema.sql`.
 
-INSERT INTO contrato
-(contrato_id, propiedad, fecha_inicio, fecha_fin, tipo_ajuste, periodicidad, importe_inicial)
-VALUES
+Cada paso se aplica solo si falta, así que es seguro correrlo siempre: sobre una
+base ya migrada no hace nada, y una que quedó a mitad de camino se completa.
 
--- Deben actualizarse AHORA (agosto 2026)
-('000001',1,'2026-04-01','2028-03-31','IPC',4,500000),
-('000002',2,'2026-04-15','2028-04-14','IPC',4,620000),
-('000003',3,'2026-04-25','2028-04-24','IPC',4,710000),
+```bash
+mysql -u root -p inmobiliaria_db < sql/03_migracion.sql
+```
 
--- Ya tuvieron ajuste el mes pasado (julio)
-('000004',4,'2026-03-01','2028-02-28','IPC',4,580000),
-('000005',5,'2026-03-15','2028-03-14','IPC',4,640000),
+### Datos de prueba
 
--- Contrato nuevo (todavía no ajusta)
-('000006',6,'2026-07-10','2028-07-09','IPC',4,760000);
+El seed usa **agosto de 2026** como mes de referencia:
 
-INSERT INTO contrato_inquilino
-(contrato, cliente)
-VALUES
-('000001',7),
-('000002',8),
-('000003',9),
-('000004',10),
-('000005',11),
-('000006',12);
+- `GET /api/v1/recibos/pendientes?mes=8&anio=2026` devuelve 3 contratos (`000001`, `000002`, `000003`).
+- `000005` es ICL, así que la query de IPC lo descarta.
+- `000006` es un contrato nuevo que todavía no ajusta.
+- La propiedad 3 tiene dos propietarios (60/40) y dos co-inquilinos.
+- La propiedad 7 no tiene contratos, sirve para probar el `DELETE`.
 
-INSERT INTO valor_historico
-(contrato, importe_inicial, fecha_inicio, fecha_fin)
-VALUES
+## Configuración
 
--- ===============================
--- YA SE AJUSTARON EN JULIO
--- (vigencia julio-octubre)
--- ===============================
+La conexión sale de `DATABASE_URL` en `.env`:
 
+```
+DATABASE_URL=mysql+pymysql://usuario:password@localhost/inmobiliaria_db
+```
 
-('000004',450000.00,'2026-08-01','2026-10-30'),
+## Correr la API
 
--- ===============================
--- DEBEN AJUSTARSE AHORA
--- (vigencia mayo-agosto)
+```bash
+uvicorn main:app --reload
+```
 
--- ===============================
-
-('000001',500000.00,'2026-05-01','2026-08-31'),
-('000002',620000.00,'2026-05-01','2026-08-31'),
-('000003',710000.00,'2026-05-01','2026-08-31'),
-
-
--- ===============================
--- YA SE AJUSTARON EN JUNIO
--- (vigencia junio-septiembre)
--- ===============================
-
-('000005',560000.00,'2026-02-01','2026-05-31'),
-('000005',590000.00,'2026-06-01','2026-09-30'),
-
--- ===============================
--- CONTRATO NUEVO
--- Primer ajuste en diciembre
--- ===============================
-
-('000006',760000.00,'2026-08-01','2026-11-30');
-
-
-
-INSERT INTO libroDiario (fecha, concepto, monto, tipo)
-VALUES
--- Junio 2026
-('2026-06-02', 'Comisión alquiler - Propiedad 101', 85000, 'INGRESO'),
-('2026-06-05', 'Comisión alquiler - Propiedad 205', 65000, 'INGRESO'),
-('2026-06-10', 'Monotributo', 180000, 'EGRESO'),
-('2026-06-15', 'Luz oficina', 35000, 'EGRESO'),
-('2026-06-20', 'Comisión alquiler - Propiedad 310', 95000, 'INGRESO'),
-
--- Julio 2026
-('2026-07-01', 'Comisión alquiler - Propiedad 101', 85000, 'INGRESO'),
-('2026-07-04', 'Comisión alquiler - Propiedad 205', 70000, 'INGRESO'),
-('2026-07-08', 'Monotributo', 180000, 'EGRESO'),
-('2026-07-12', 'Internet oficina', 28000, 'EGRESO'),
-('2026-07-18', 'Comisión alquiler - Propiedad 310', 100000, 'INGRESO'),
-('2026-07-25', 'Compra artículos de oficina', 45000, 'EGRESO'),
-
--- Agosto 2026
-('2026-08-03', 'Comisión alquiler - Propiedad 101', 90000, 'INGRESO'),
-('2026-08-07', 'Comisión alquiler - Propiedad 205', 75000, 'INGRESO'),
-('2026-08-10', 'Cotagaita 786', 30000, 'INGRESO'),
-('2026-08-11', 'Monotributo', 180000, 'EGRESO'),
-('2026-08-15', 'Comisión alquiler - Propiedad 310', 105000, 'INGRESO'),
-('2026-08-20', 'Luz oficina', 40000, 'EGRESO'),
-('2026-08-25', 'Mantenimiento oficina', 55000, 'EGRESO'),
-
--- Septiembre 2026
-('2026-09-02', 'Comisión alquiler - Propiedad 101', 90000, 'INGRESO'),
-('2026-09-05', 'Comisión alquiler - Propiedad 205', 75000, 'INGRESO'),
-('2026-09-10', 'Monotributo', 185000, 'EGRESO'),
-('2026-09-14', 'Internet oficina', 30000, 'EGRESO'),
-('2026-09-20', 'Comisión alquiler - Propiedad 310', 105000, 'INGRESO'),
-('2026-09-28', 'Publicidad', 60000, 'EGRESO'),
-
--- Octubre 2026
-('2026-10-01', 'Comisión alquiler - Propiedad 101', 95000, 'INGRESO'),
-('2026-10-06', 'Comisión alquiler - Propiedad 205', 80000, 'INGRESO'),
-('2026-10-10', 'Monotributo', 185000, 'EGRESO'),
-('2026-10-15', 'Comisión alquiler - Propiedad 310', 110000, 'INGRESO'),
-('2026-10-20', 'Luz oficina', 42000, 'EGRESO'),
-('2026-10-25', 'Compra artículos de oficina', 35000, 'EGRESO');
-
-use inmobiliaria_db;
-drop table IPC
-
-
-PARA MIGRAR UNA DB YA EXISTENTE (no hace falta si se recrea con el script de arriba):
-
--- 1) normalizar antes de pasar la columna a NOT NULL
-UPDATE propiedad
-SET estado = 'Activa'
-WHERE estado IS NULL OR estado NOT IN ('Activa', 'Inactiva');
-
--- 2) cambiar el tipo y sumar el estado de alquiler
-ALTER TABLE propiedad
-  MODIFY COLUMN estado ENUM('Activa','Inactiva') NOT NULL DEFAULT 'Activa',
-  ADD COLUMN estado_alquiler ENUM('Abono','Adeuda') NOT NULL DEFAULT 'Adeuda' AFTER ambientes;
-
--- 3) libro diario: depósitos y retiros de caja, propiedad del movimiento y cuenta destino
-ALTER TABLE libroDiario
-  MODIFY COLUMN tipo ENUM('INGRESO','DEPOSITO','EGRESO','RETIRO') NOT NULL,
-  ADD COLUMN propiedad_id INT NULL AFTER fecha,
-  ADD COLUMN piso  VARCHAR(10) NULL AFTER propiedad_id,
-  ADD COLUMN depto VARCHAR(10) NULL AFTER piso,
-  ADD COLUMN cuenta ENUM('Kike','Dai') NULL AFTER tipo,
-  ADD CONSTRAINT fk_librodiario_propiedad
-      FOREIGN KEY (propiedad_id) REFERENCES propiedad(propiedad_id);
-
-CREATE INDEX idx_librodiario_fecha ON libroDiario(fecha);
+Queda en `http://127.0.0.1:8000`, que es adonde apunta el front. Todo endpoint de
+negocio cuelga de `/api/v1` (`settings.API_PREFIX`), así que la URL completa de una
+colección es `http://127.0.0.1:8000/api/v1/propiedades`. Documentación interactiva
+en `/api/docs`; el chequeo de vida, en `/health`.
