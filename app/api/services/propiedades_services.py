@@ -84,8 +84,11 @@ def get_inmuebles(
             text(f"SELECT COUNT(*) FROM propiedad p{where}"), params
         ).scalar() or 0
 
+        # El propiedad_id desempata direcciones repetidas: sin él el orden entre páginas
+        # queda indefinido y una fila puede repetirse o perderse al paginar.
         query = text(
-            PROPIEDAD_SELECT + where + " ORDER BY p.propiedad_id LIMIT :_limit OFFSET :_offset"
+            PROPIEDAD_SELECT + where
+            + " ORDER BY p.direccion ASC, p.propiedad_id ASC LIMIT :_limit OFFSET :_offset"
         )
         filas = db.execute(query, {**params, "_limit": limit, "_offset": offset}).mappings().all()
         return [serializar_fila(fila) for fila in filas], total
