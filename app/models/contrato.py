@@ -25,6 +25,18 @@ class PeriodicidadContrato (str, Enum):
 	Semestral="Semestral"
 
 
+# Cada cuántos meses le toca ajuste a un contrato según su periodicidad.
+#
+# La query de recibo_service.CONTRATOS_A_AJUSTAR_SELECT hace la misma traducción
+# con un CASE, porque decide en SQL; si acá se agrega una periodicidad, hay que
+# tocar las dos.
+MESES_POR_PERIODICIDAD = {
+	PeriodicidadContrato.Trimestral.value: 3,
+	PeriodicidadContrato.Cuatrimestral.value: 4,
+	PeriodicidadContrato.Semestral.value: 6,
+}
+
+
 class Contrato(Base):
 	__tablename__ = "contrato"
 
@@ -41,9 +53,20 @@ class Contrato(Base):
 	# en `garante`: GPremier nunca las tiene; Garantia Propietaria y Garantes sí.
 	garantia = Column(SQLEnum(TipoGarantia, values_callable=lambda enum_cls: [m.value for m in enum_cls]), nullable=False, default=TipoGarantia.GPremier)
 	direccion_garantia = Column(String(255), nullable=True)
-	# Rescisión: último día del mes en que se fue el inquilino y la penalidad
-	# calculada. `fecha_fin` conserva el plazo pactado para poder auditar el cálculo.
+	# Rescisión en dos tiempos. `fecha_rescision` es el cierre del mes que el
+	# inquilino avisó que se va: se carga con el aviso y el contrato sigue Activo,
+	# porque ese mes lo paga y se ajusta como cualquier otro.
 	fecha_rescision = Column(Date, nullable=True)
+	# El día real en que entregó las llaves. Recién ahí se conoce el alquiler con
+	# el que se calcula la penalidad, así que las dos se llenan juntas.
+	#
+	# La columna se llama `fecha_salida` en la tabla; el atributo va con el nombre
+	# que expone la API, igual que en ValorHistorico.contrato_id. Además deja el
+	# nombre `fecha_salida` libre para lo que significa en RescisionCalculo, que es
+	# otra cosa: el último día del mes elegido.
+	fecha_entrega_llaves = Column("fecha_salida", Date, nullable=True)
+	# Definitiva, no estimada: se escribe junto con fecha_entrega_llaves.
+	# `fecha_fin` conserva el plazo pactado para poder auditar el cálculo.
 	penalidad = Column(Numeric(12, 2), nullable=True)
 
 	propiedad_obj = relationship("Propiedad", back_populates="contratos")

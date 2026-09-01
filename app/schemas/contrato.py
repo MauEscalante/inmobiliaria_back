@@ -93,7 +93,10 @@ class ContratoRead(BaseModel):
     estado: EstadoContrato
     garantia: TipoGarantia
     direccion_garantia: str | None = None
+    # El mes que el inquilino avisó que se va; el contrato sigue Activo hasta que
+    # entrega las llaves, y recién ahí se llenan las otras dos.
     fecha_rescision: date | None = None
+    fecha_entrega_llaves: date | None = None
     penalidad: float | None = None
 
 
@@ -121,7 +124,10 @@ class ContratoDetalle(BaseModel):
     tipo_ajuste: TipoAjuste | None = None
     periodicidad: PeriodicidadContrato | None = None
     estado: EstadoContrato
+    # El mes que el inquilino avisó que se va; el contrato sigue Activo hasta que
+    # entrega las llaves, y recién ahí se llenan las otras dos.
     fecha_rescision: date | None = None
+    fecha_entrega_llaves: date | None = None
     penalidad: float | None = None
 
 
@@ -130,6 +136,15 @@ class RescisionCreate(BaseModel):
 
     anio: int = Field(..., ge=2000, le=2100)
     mes: int = Field(..., ge=1, le=12)
+
+
+class EntregaLlavesCreate(BaseModel):
+    """Cierre de la rescisión con la fecha real en que se entregaron las llaves."""
+
+    fecha_entrega: date
+    # Solo hace falta cuando el mes de la entrega todavía no tiene su ajuste cargado
+    # y el cálculo viene con `importe_estimado`. Si no, la base ya sabe el alquiler.
+    importe_alquiler: float | None = Field(None, gt=0)
 
 
 class RescisionCalculo(BaseModel):
@@ -149,5 +164,9 @@ class RescisionCalculo(BaseModel):
     # mes anterior al de salida, ese mes todavía no se liquidó y se arrastró el
     # último valor conocido.
     importe_vigente_desde: date
+    # Entre ese tramo y el mes de salida al contrato le entra un ajuste que todavía
+    # no se cargó, así que `penalidad` es orientativa. La definitiva se calcula al
+    # registrar la entrega de llaves, con el alquiler real de ese mes.
+    importe_estimado: bool
     porcentaje_penalidad: float
     penalidad: float
