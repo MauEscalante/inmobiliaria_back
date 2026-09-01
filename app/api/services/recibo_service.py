@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 import requests
 from openpyxl import load_workbook
@@ -26,6 +27,10 @@ MESES = {
 
 # Solo las columnas que el recurso expone, en vez del SELECT * que devolvía la
 # tabla entera de contratos sin contrato de datos.
+#
+# El CASE traduce la periodicidad a meses acá porque la decisión se toma en SQL;
+# la versión Python de ese mapa es contrato.MESES_POR_PERIODICIDAD, que usa el
+# cálculo de rescisión. Si se agrega una periodicidad hay que tocar las dos.
 CONTRATOS_A_AJUSTAR_SELECT = """
     SELECT contrato_id, propiedad, fecha_inicio, fecha_fin,
            importe_inicial, periodicidad, tipo_ajuste
@@ -91,12 +96,24 @@ def actualizar_fechas(
     ws["J13"].value = anio_liquidacion
 
 
-def actualizar_ipc(recibo: str, wb: Workbook, valores_ipc: list) -> None:
+def factor_ipc(valores_ipc: list) -> Decimal:
+    """Cuánto se multiplica el alquiler con los valores de IPC del período."""
+    factor = Decimal("1")
+    for valor in valores_ipc:
+        factor *= Decimal(str(valor["valor"]))
+    return factor
+
+
+def actualizar_importe(recibo: str, wb: Workbook, importe) -> None:
+    """Escribe en el recibo el alquiler que quedó guardado en valor_historico.
+
+    Antes se multiplicaba la celda por sí misma, y como el recibo ya trae una
+    aproximación hecha el valor se iba separando del de la base ajuste tras ajuste.
+    La base manda: es de donde sale el importe del próximo re-ajuste y el de la
+    penalidad por rescisión.
+    """
     ws = wb[recibo]
-    for i in valores_ipc:
-        # El valor a actualizar en re-ajuste debe salir de la db: el del recibo ya
-        # tiene una aproximación hecha y no es el valor a tomar para el re-ajuste.
-        ws["E22"].value = float(ws["E22"].value) * i["valor"]
+    ws["E22"].value = float(importe)
 
 
 def get_ipc() -> list:

@@ -144,3 +144,67 @@ CREATE TABLE IF NOT EXISTS ajuste_recibo (
     PRIMARY KEY (ajuste_id),
     KEY idx_ajuste_estado (estado)
 ) ENGINE=InnoDB;
+
+
+-- -----------------------------------------------------------------------------
+-- 5) Rescisión en dos tiempos
+-- -----------------------------------------------------------------------------
+-- El aviso ("me voy a fin de tal mes") y la entrega de llaves son dos momentos
+-- distintos: entre uno y otro el contrato sigue Activo, cobrando y ajustando. La
+-- penalidad no se puede calcular en el primero porque el alquiler del mes de
+-- salida todavía puede cambiar por un ajuste, así que se guarda en el segundo.
+--
+--   fecha_rescision -> cierre del mes avisado. Se carga con el aviso.
+--   fecha_salida    -> día real de entrega de llaves. NULL hasta que pasa.
+--   penalidad       -> definitiva, se calcula junto con fecha_salida.
+
+-- 'Rescindido' es el estado final, una vez entregadas las llaves. MODIFY al mismo
+-- tipo es un no-op, así que no necesita guarda.
+ALTER TABLE contrato
+  MODIFY COLUMN estado ENUM('Activo','Inactivo','Rescindido') NOT NULL DEFAULT 'Activo';
+
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'contrato' AND COLUMN_NAME = 'fecha_rescision') = 0,
+  'ALTER TABLE contrato ADD COLUMN fecha_rescision DATE NULL AFTER direccion_garantia',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'contrato' AND COLUMN_NAME = 'fecha_salida') = 0,
+  'ALTER TABLE contrato ADD COLUMN fecha_salida DATE NULL AFTER fecha_rescision',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'contrato' AND COLUMN_NAME = 'penalidad') = 0,
+  'ALTER TABLE contrato ADD COLUMN penalidad DECIMAL(12,2) NULL AFTER fecha_salida',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+
+-- -----------------------------------------------------------------------------
+-- 6) Tramo inicial de los contratos anteriores a valor_historico
+-- -----------------------------------------------------------------------------
+-- El alta siembra el primer tramo desde que existe la tabla, pero los contratos
+-- cargados antes quedaron sin ninguno. Sin tramo no hay importe consultable por
+-- fecha, y el cálculo de rescisión corta con 'sin_importe_vigente'.
+--
+-- Se siembra lo mismo que sembrar_tramo_inicial(): el importe del alta por todo
+-- el plazo. Los ajustes posteriores lo van recortando. Repetirlo no inserta nada,
+-- porque solo toma los contratos que hoy no tienen ninguna fila.
+INSERT INTO valor_historico (contrato, importe_inicial, fecha_inicio, fecha_fin)
+SELECT c.contrato_id, c.importe_inicial, c.fecha_inicio, c.fecha_fin
+  FROM contrato c
+ WHERE c.fecha_inicio IS NOT NULL
+   AND c.fecha_fin IS NOT NULL
+   AND c.fecha_fin >= c.fecha_inicio
+   AND NOT EXISTS (SELECT 1 FROM valor_historico v WHERE v.contrato = c.contrato_id);

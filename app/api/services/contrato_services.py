@@ -89,7 +89,7 @@ def get_contrato_detalle(contrato_id: str):
                 SELECT c.contrato_id, c.fecha_inicio, c.fecha_fin, c.importe_inicial,
                        c.deposito, c.tipo_ajuste, c.periodicidad, c.estado,
                        c.garantia, c.direccion_garantia,
-                       c.fecha_rescision, c.penalidad,
+                       c.fecha_rescision, c.fecha_salida, c.penalidad,
                        p.propiedad_id, p.direccion
                 FROM contrato c
                 JOIN propiedad p ON p.propiedad_id = c.propiedad
@@ -138,6 +138,8 @@ def get_contrato_detalle(contrato_id: str):
             "periodicidad": contrato["periodicidad"],
             "estado": contrato["estado"],
             "fecha_rescision": contrato["fecha_rescision"],
+            # La columna es `fecha_salida`; hacia afuera se llama como en el modelo.
+            "fecha_entrega_llaves": contrato["fecha_salida"],
             "penalidad": contrato["penalidad"],
         }
     finally:
@@ -223,12 +225,54 @@ def crear_contrato(contrato_data: dict):
         db.close()
 
 
-def rescindir_contrato(contrato_id: str, fecha_salida, penalidad):
-    """Cierra el contrato por rescisión. Devuelve None si no existe.
+def agendar_rescision(contrato_id: str, fecha_salida):
+    """Registra el aviso de salida. Devuelve None si el contrato no existe.
 
-    `fecha_fin` no se toca: guarda el plazo pactado, que es contra lo que se
-    calculó la penalidad. Quien quiera saber hasta cuándo estuvo ocupada la
-    propiedad mira `fecha_rescision`.
+    El contrato queda Activo a propósito: hasta que no entregue las llaves sigue
+    ocupando la propiedad, pagando y ajustando. Por eso acá no se toca ni el estado
+    ni la penalidad; eso es trabajo de cerrar_contrato_por_entrega().
+
+    `fecha_fin` tampoco se toca: guarda el plazo pactado, que es contra lo que se
+    cuentan los meses restantes de la penalidad.
+    """
+    db = SessionLocal()
+    try:
+        contrato = db.query(Contrato).where(Contrato.contrato_id == contrato_id).first()
+        if not contrato:
+            return None
+
+        contrato.fecha_rescision = fecha_salida
+
+        propiedad = db.get(Propiedad, contrato.propiedad)
+        registrar(
+            db,
+            TipoEvento.contrato_rescindido.value,
+            f"Se registró la rescisión del contrato de {propiedad.direccion}"
+            if propiedad
+            else "Se registró la rescisión de un contrato",
+            "contrato",
+            contrato.contrato_id,
+        )
+
+        db.commit()
+        db.refresh(contrato)
+        db.expunge(contrato)
+        return contrato
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def cerrar_contrato_por_entrega(contrato_id: str, fecha_entrega, penalidad):
+    """Cierra el contrato con la entrega de llaves. Devuelve None si no existe.
+
+    Es el segundo tiempo de la rescisión: acá ya se conoce el alquiler del mes de
+    salida, así que la penalidad que se guarda es la definitiva.
+
+    `fecha_rescision` queda como estaba —el mes que se avisó— aunque la entrega
+    haya caído en otro: sirve para contrastar lo comprometido contra lo que pasó.
     """
     db = SessionLocal()
     try:
@@ -237,19 +281,46 @@ def rescindir_contrato(contrato_id: str, fecha_salida, penalidad):
             return None
 
         contrato.estado = EstadoContrato.Rescindido
-        contrato.fecha_rescision = fecha_salida
+        contrato.fecha_entrega_llaves = fecha_entrega
         contrato.penalidad = penalidad
 
         propiedad = db.get(Propiedad, contrato.propiedad)
         registrar(
             db,
-            TipoEvento.contrato_rescindido.value,
-            f"Se rescindió el contrato de {propiedad.direccion}"
+            TipoEvento.llaves_recibidas.value,
+            f"Se recibieron las llaves de {propiedad.direccion}"
             if propiedad
-            else "Se rescindió un contrato",
+            else "Se recibieron las llaves de una propiedad",
             "contrato",
             contrato.contrato_id,
         )
+
+        db.commit()
+        db.refresh(contrato)
+        db.expunge(contrato)
+        return contrato
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def limpiar_rescision(contrato_id: str):
+    """Borra el aviso de salida. Devuelve None si el contrato no existe.
+
+    No emite evento: deshacer una carga equivocada no es algo que haya pasado en
+    la vida del contrato, y la bitácora ya tiene el aviso original.
+    """
+    db = SessionLocal()
+    try:
+        contrato = db.query(Contrato).where(Contrato.contrato_id == contrato_id).first()
+        if not contrato:
+            return None
+
+        contrato.fecha_rescision = None
+        contrato.fecha_entrega_llaves = None
+        contrato.penalidad = None
 
         db.commit()
         db.refresh(contrato)

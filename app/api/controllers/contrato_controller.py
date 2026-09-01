@@ -4,6 +4,8 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.api.errors import raise_conflict, raise_not_found, raise_unprocessable
 from app.api.services.contrato_services import (
+    agendar_rescision,
+    cerrar_contrato_por_entrega,
     crear_contrato,
     eliminar_contrato,
     existe_contrato,
@@ -12,11 +14,11 @@ from app.api.services.contrato_services import (
     get_contratos,
     get_garantes_de_contrato,
     get_inquilinos_de_contrato,
-    rescindir_contrato,
+    limpiar_rescision,
 )
 from app.api.services.propiedades_services import get_inmueble_by_id
 from app.api.services.valor_historico_service import get_importe_vigente_del_mes
-from app.models.contrato import EstadoContrato
+from app.models.contrato import MESES_POR_PERIODICIDAD, EstadoContrato, TipoAjuste
 
 # Lo que se cobra al inquilino que se va antes de tiempo: el 10% de lo que
 # quedaba por pagar hasta el final del contrato.
@@ -75,6 +77,42 @@ def _mes_limite() -> tuple[int, int]:
     hoy = date.today()
     mes = hoy.month + MESES_VENTANA_SALIDA
     return (hoy.year + (mes - 1) // 12, (mes - 1) % 12 + 1)
+
+
+def _indice_mes(anio: int, mes: int) -> int:
+    """Mes como número corrido, para restar dos fechas sin pelear con el calendario."""
+    return anio * 12 + mes
+
+
+def _hay_ajuste_sin_registrar(contrato, tramo_inicio: date, anio: int, mes: int) -> bool:
+    """Al contrato le toca al menos un ajuste entre el tramo vigente y el mes de salida.
+
+    Ese ajuste todavía no está en valor_historico —el proceso de recibos abre el
+    tramo recién cuando se liquida el mes—, así que el importe que se está usando
+    es el anterior y la penalidad que sale de él es una estimación.
+
+    La cuenta de a qué contrato le toca ajuste en un mes es la misma que hace
+    recibo_service.CONTRATOS_A_AJUSTAR_SELECT: meses transcurridos desde el inicio
+    múltiplo de la periodicidad. Solo se ajustan los de IPC, así que un contrato de
+    ICL o sin tipo de ajuste nunca da estimado.
+    """
+    if contrato.tipo_ajuste != TipoAjuste.IPC or not contrato.periodicidad:
+        return False
+
+    cada = MESES_POR_PERIODICIDAD.get(contrato.periodicidad.value)
+    if not cada:
+        return False
+
+    inicio = _indice_mes(contrato.fecha_inicio.year, contrato.fecha_inicio.month)
+    desde = _indice_mes(tramo_inicio.year, tramo_inicio.month)
+    hasta = _indice_mes(anio, mes)
+
+    # Desde el mes siguiente al del tramo: el suyo propio ya está contemplado en el
+    # importe que se leyó.
+    return any(
+        (indice - inicio) > 0 and (indice - inicio) % cada == 0
+        for indice in range(desde + 1, hasta + 1)
+    )
 
 
 def calcular_rescision(contrato_id: str, anio: int, mes: int) -> dict:
@@ -151,17 +189,104 @@ def calcular_rescision(contrato_id: str, anio: int, mes: int) -> dict:
         # De qué tramo salió el importe. Cuando el mes de salida todavía no se
         # liquidó es anterior al mes elegido, y la pantalla lo aclara.
         "importe_vigente_desde": tramo["fecha_inicio"],
+        # Entre ese tramo y el mes de salida le entra un ajuste que todavía no se
+        # cargó: el número de abajo es orientativo y se rehace al entregar las llaves.
+        "importe_estimado": _hay_ajuste_sin_registrar(
+            contrato, tramo["fecha_inicio"], anio, mes
+        ),
         "porcentaje_penalidad": PORCENTAJE_PENALIDAD,
         "penalidad": penalidad,
     }
 
 
-def rescindir(contrato_id: str, anio: int, mes: int) -> dict:
-    """Confirma la rescisión. Recalcula en vez de confiar en lo que vio el cliente."""
+def registrar_aviso(contrato_id: str, anio: int, mes: int) -> dict:
+    """Registra que el inquilino se va tal mes. NO cierra el contrato.
+
+    Queda Activo con la salida agendada porque ese mes lo paga y se sigue
+    liquidando y ajustando como cualquier otro. La penalidad no se guarda todavía:
+    hasta que no entregue las llaves no se sabe con qué alquiler se calcula, así
+    que lo que devuelve esta función puede ser una estimación (`importe_estimado`).
+
+    Recalcula del lado del servidor en vez de confiar en lo que vio el cliente.
+    """
     calculo = calcular_rescision(contrato_id, anio, mes)
 
-    if not rescindir_contrato(contrato_id, calculo["fecha_salida"], calculo["penalidad"]):
+    if not agendar_rescision(contrato_id, calculo["fecha_salida"]):
         # Se borró entre el cálculo y el update.
         raise_not_found("Contrato", contrato_id)
 
     return calculo
+
+
+def cerrar_por_entrega(contrato_id: str, fecha_entrega: date, importe_alquiler=None) -> dict:
+    """Cierra el contrato con la fecha real de entrega y la penalidad definitiva.
+
+    Se calcula contra el mes de la entrega y no contra el que se avisó: si la
+    entrega se corrió de mes, ese mes se paga entero y los meses restantes se
+    cuentan desde ahí.
+    """
+    contrato = get_contrato_by_id(contrato_id)
+    if not contrato:
+        raise_not_found("Contrato", contrato_id)
+
+    if contrato.fecha_rescision is None:
+        raise_conflict(
+            f"El contrato {contrato_id} no tiene una rescisión registrada: "
+            "primero hay que avisar la salida",
+            field="fecha_rescision",
+            code="sin_rescision_registrada",
+        )
+
+    calculo = calcular_rescision(contrato_id, fecha_entrega.year, fecha_entrega.month)
+
+    # El ajuste del mes de salida no está cargado, así que el tramo no sirve de base:
+    # el importe lo aporta quien registra la entrega, que ya tiene el recibo.
+    if calculo["importe_estimado"]:
+        if importe_alquiler is None:
+            raise_unprocessable(
+                f"El alquiler de {fecha_entrega.month:02d}/{fecha_entrega.year} todavía "
+                "no está cargado: indicá el importe para calcular la penalidad",
+                field="importe_alquiler",
+                code="importe_alquiler_requerido",
+            )
+
+        base = Decimal(str(importe_alquiler))
+        calculo["importe_vigente"] = base
+        calculo["penalidad"] = (
+            base * calculo["meses_restantes"] * PORCENTAJE_PENALIDAD
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # Ya no lo es: se cerró con el importe real que pasó el operador.
+        calculo["importe_estimado"] = False
+
+    if not cerrar_contrato_por_entrega(contrato_id, fecha_entrega, calculo["penalidad"]):
+        raise_not_found("Contrato", contrato_id)
+
+    return calculo
+
+
+def cancelar_aviso(contrato_id: str) -> None:
+    """Deshace un aviso mal cargado y devuelve el contrato a su curso normal.
+
+    Solo aplica mientras las llaves no se entregaron: un contrato ya cerrado no se
+    reabre por acá.
+    """
+    contrato = get_contrato_by_id(contrato_id)
+    if not contrato:
+        raise_not_found("Contrato", contrato_id)
+
+    if contrato.estado == EstadoContrato.Rescindido:
+        raise_conflict(
+            f"El contrato {contrato_id} ya está cerrado: cancelar el aviso no lo reabre",
+            field="estado",
+            code="contrato_ya_rescindido",
+        )
+
+    if contrato.fecha_rescision is None:
+        raise_conflict(
+            f"El contrato {contrato_id} no tiene una rescisión registrada",
+            field="fecha_rescision",
+            code="sin_rescision_registrada",
+        )
+
+    if not limpiar_rescision(contrato_id):
+        raise_not_found("Contrato", contrato_id)

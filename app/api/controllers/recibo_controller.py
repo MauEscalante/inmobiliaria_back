@@ -1,16 +1,20 @@
 import logging
+from datetime import date
+from decimal import Decimal
 
 from app.api.errors import raise_conflict
 from app.api.services import ajuste_service
 from app.api.services.libro_diario_service import marcar_todas_adeuda
 from app.api.services.recibo_service import (
     actualizar_fechas,
-    actualizar_ipc,
+    actualizar_importe,
     cargar_planilla,
+    factor_ipc,
     get_ipc,
     get_propiedades_ajustar,
     nombres_de_hojas,
 )
+from app.api.services.valor_historico_service import aplicar_ajuste_del_periodo
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -42,21 +46,27 @@ def actualizar_recibos(mes_liquidacion: int, anio_liquidacion: int) -> dict:
     """
     contratos_a_ajustar = get_propiedades_ajustar(mes_liquidacion, anio_liquidacion)
 
+    # El ajuste se guarda en valor_historico ANTES de tocar la planilla, y el recibo
+    # se escribe con el número que quedó en la base. Así el alquiler vigente vive en
+    # la base —de donde lo leen el próximo re-ajuste y la penalidad por rescisión— y
+    # no solo en el Excel. Es idempotente: repetir el período no vuelve a ajustar.
+    importes = aplicar_ajuste_del_periodo(
+        contratos_a_ajustar,
+        date(anio_liquidacion, mes_liquidacion, 1),
+        factor_ipc(get_ipc()) if contratos_a_ajustar else Decimal("1"),
+    )
+
     # OJO: se compara el nombre de la hoja contra el contrato_id. Antes se comparaba
     # un str contra una lista de dicts, condición que nunca podía ser verdadera, así
-    # que actualizar_ipc no se ejecutaba nunca. Si las hojas no se llaman como el
+    # que el ajuste no se ejecutaba nunca. Si las hojas no se llaman como el
     # contrato, este match sigue sin dar y hay que definir la convención de nombres.
-    ids_a_ajustar = {str(contrato["contrato_id"]) for contrato in contratos_a_ajustar}
-
-    valores_ipc = get_ipc() if contratos_a_ajustar else []
-
     wb = cargar_planilla()
     ajustados = 0
     for recibo in wb.sheetnames:
         actualizar_fechas(recibo, mes_liquidacion, anio_liquidacion, wb)
 
-        if recibo in ids_a_ajustar:
-            actualizar_ipc(recibo, wb, valores_ipc)
+        if recibo in importes:
+            actualizar_importe(recibo, wb, importes[recibo])
             ajustados += 1
 
     wb.save(settings.RECIBOS_TEMPLATE)

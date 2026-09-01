@@ -116,6 +116,16 @@ CREATE TABLE propiedad_propietario (
 -- `garante`: GPremier (seguro de caución) nunca las tiene; 'Garantia
 -- Propietaria' y 'Garantes' sí. 'Garantia Propietaria' además usa
 -- `direccion_garantia` para el inmueble ofrecido en garantía.
+--
+-- La rescisión se registra en dos tiempos y por eso son tres columnas:
+--   `fecha_rescision` es el cierre del mes que el inquilino avisó que se va. Se
+--   carga con el aviso y el contrato sigue Activo, porque ese mes lo paga y se
+--   ajusta como cualquier otro.
+--   `fecha_salida` es el día real en que entregó las llaves. Hasta entonces es
+--   NULL, y recién ahí se conoce el alquiler con el que se calcula `penalidad`
+--   y el contrato pasa a Rescindido.
+-- `fecha_fin` no se pisa nunca: guarda el plazo pactado, que es contra lo que se
+-- contaron los meses restantes de la penalidad.
 -- -----------------------------------------------------------------------------
 CREATE TABLE contrato (
     contrato_id        VARCHAR(10)   NOT NULL,
@@ -126,10 +136,13 @@ CREATE TABLE contrato (
     periodicidad       ENUM('Trimestral', 'Cuatrimestral', 'Semestral') NULL,
     importe_inicial    DECIMAL(12,2) NOT NULL,
     deposito           DECIMAL(12,2) NULL,
-    estado             ENUM('Activo', 'Inactivo') NOT NULL DEFAULT 'Activo',
+    estado             ENUM('Activo', 'Inactivo', 'Rescindido') NOT NULL DEFAULT 'Activo',
     garantia           ENUM('GPremier', 'Garantia Propietaria', 'Garantes')
                        NOT NULL DEFAULT 'GPremier',
     direccion_garantia VARCHAR(255)  NULL,
+    fecha_rescision    DATE          NULL,
+    fecha_salida       DATE          NULL,
+    penalidad          DECIMAL(12,2) NULL,
 
     PRIMARY KEY (contrato_id),
     KEY fk_contrato_propiedad (propiedad),
