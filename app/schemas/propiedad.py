@@ -24,11 +24,16 @@ class PropietarioInput(BaseModel):
     email: str | None = Field(None, max_length=100, pattern=EMAIL_PATTERN)
 
     @model_validator(mode="after")
-    def _existente_o_con_dni(self):
+    def _existente_o_completo(self):
         # Antes vivía en propiedades_controller como un 400 suelto; acá sale como
-        # 422 con el campo señalado.
-        if not self.cliente_num and not (self.dni or "").strip():
+        # 422 con el campo señalado. Un propietario existente viaja solo con su
+        # cliente_num; el nuevo necesita con qué identificarlo y cómo contactarlo.
+        if self.cliente_num:
+            return self
+        if not (self.dni or "").strip():
             raise ValueError("un propietario nuevo necesita DNI")
+        if not (self.email or "").strip():
+            raise ValueError("un propietario nuevo necesita email")
         return self
 
 

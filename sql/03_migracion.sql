@@ -208,3 +208,66 @@ SELECT c.contrato_id, c.importe_inicial, c.fecha_inicio, c.fecha_fin
    AND c.fecha_fin IS NOT NULL
    AND c.fecha_fin >= c.fecha_inicio
    AND NOT EXISTS (SELECT 1 FROM valor_historico v WHERE v.contrato = c.contrato_id);
+
+
+-- -----------------------------------------------------------------------------
+-- 7) Tramos provisorios (ajuste con índice repetido)
+-- -----------------------------------------------------------------------------
+-- El IPC de un mes se publica a mediados del siguiente, así que al ajustar en
+-- septiembre falta el índice de agosto. El ajuste se hace igual repitiendo el
+-- último publicado, y el tramo queda marcado acá; al mes siguiente se re-ajusta
+-- con el valor real y se abre el tramo definitivo desde el 1°.
+--
+-- El provisorio no se corrige: ese importe ya se cobró.
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'valor_historico' AND COLUMN_NAME = 'provisorio') = 0,
+  'ALTER TABLE valor_historico ADD COLUMN provisorio TINYINT(1) NOT NULL DEFAULT 0 AFTER importe_inicial',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+
+-- -----------------------------------------------------------------------------
+-- 8) cliente y propiedad_propietario: alinear con 01_schema.sql
+-- -----------------------------------------------------------------------------
+-- Las bases creadas desde el modelo de Workbench (DER.mwb) quedaron con columnas
+-- más chicas que las que validan los schemas y con la comisión entera:
+--   * cliente.telefono VARCHAR(10): un teléfono de 11+ dígitos pasa Pydantic
+--     (max_length=15) y revienta en MySQL con "Data too long" -> 500.
+--   * propiedad_propietario.comision INT NOT NULL: una comisión de 6.5 se
+--     redondeaba a 7 en silencio, y un NULL (que el modelo admite) daba 409.
+--   * propiedad_propietario.propiedad_id con AUTO_INCREMENT siendo una FK.
+--   * cliente sin el UNIQUE (dni) del que depende find_or_create_cliente().
+--
+-- MODIFY al mismo tipo es un no-op, así que las columnas no necesitan guarda.
+-- No se toca cliente.tipo: 01_schema.sql lo tiene como ENUM, pero una base vieja
+-- puede traer valores fuera de la lista y el ALTER abortaría.
+ALTER TABLE cliente
+  MODIFY COLUMN nombre   VARCHAR(50) NOT NULL,
+  MODIFY COLUMN apellido VARCHAR(50) NOT NULL,
+  MODIFY COLUMN dni      VARCHAR(15) NOT NULL,
+  MODIFY COLUMN telefono VARCHAR(20) NOT NULL,
+  MODIFY COLUMN cuil     VARCHAR(20) NULL;
+
+-- Si hubiera DNI repetidos el CREATE falla y hay que resolverlos a mano antes:
+-- no se puede elegir automáticamente cuál de los dos clientes es el bueno.
+SET @sql := IF(
+  (SELECT COUNT(*) FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'cliente'
+      AND INDEX_NAME = 'uq_cliente_dni') = 0,
+  'CREATE UNIQUE INDEX uq_cliente_dni ON cliente (dni)',
+  'DO 0'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- MySQL no deja redefinir una columna que participa en una FK (error 1832),
+-- ni siquiera para sacarle el AUTO_INCREMENT. Con foreign_key_checks apagado
+-- el ALTER pasa y la FK queda intacta: no cambia nombre, tipo ni ON DELETE.
+SET foreign_key_checks = 0;
+ALTER TABLE propiedad_propietario
+  MODIFY COLUMN propiedad_id INT NOT NULL,
+  MODIFY COLUMN comision     DECIMAL(12,2) NULL;
+SET foreign_key_checks = 1;

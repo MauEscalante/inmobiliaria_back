@@ -69,7 +69,8 @@ class TestValidacionDeBody:
             "fecha_fin": "2026-01-01",
             "importe_inicial": "500000.00",
             "inquilinos": [
-                {"nombre": "Ana", "apellido": "Perez", "telefono": "1140000001", "dni": "30111222"},
+                {"nombre": "Ana", "apellido": "Perez", "telefono": "1140000001", "dni": "30111222",
+                 "email": "ana@test.com"},
             ],
         })
         assert response.status_code == 422

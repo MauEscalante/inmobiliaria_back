@@ -1,6 +1,5 @@
 import logging
 from datetime import date
-from decimal import Decimal
 
 from app.api.errors import raise_conflict
 from app.api.services import ajuste_service
@@ -9,7 +8,7 @@ from app.api.services.recibo_service import (
     actualizar_fechas,
     actualizar_importe,
     cargar_planilla,
-    factor_ipc,
+    factores_por_contrato,
     get_ipc,
     get_propiedades_ajustar,
     nombres_de_hojas,
@@ -50,10 +49,12 @@ def actualizar_recibos(mes_liquidacion: int, anio_liquidacion: int) -> dict:
     # se escribe con el número que quedó en la base. Así el alquiler vigente vive en
     # la base —de donde lo leen el próximo re-ajuste y la penalidad por rescisión— y
     # no solo en el Excel. Es idempotente: repetir el período no vuelve a ajustar.
-    importes = aplicar_ajuste_del_periodo(
+    importes, _ = aplicar_ajuste_del_periodo(
         contratos_a_ajustar,
         date(anio_liquidacion, mes_liquidacion, 1),
-        factor_ipc(get_ipc()) if contratos_a_ajustar else Decimal("1"),
+        factores_por_contrato(contratos_a_ajustar, get_ipc(), anio_liquidacion, mes_liquidacion)
+        if contratos_a_ajustar
+        else {},
     )
 
     # OJO: se compara el nombre de la hoja contra el contrato_id. Antes se comparaba
