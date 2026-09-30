@@ -25,7 +25,7 @@ class InquilinoInput(BaseModel):
     cuil: str | None = Field(None, max_length=15)
     nacionalidad: str | None = Field(None, max_length=50)
     direccion: str | None = Field(None, max_length=255)
-    email: str | None = Field(None, max_length=100, pattern=EMAIL_PATTERN)
+    email: str = Field(..., min_length=1, max_length=100, pattern=EMAIL_PATTERN)
 
 
 class InquilinoRead(BaseModel):
@@ -74,6 +74,12 @@ class ContratoCreate(BaseModel):
             raise ValueError("un contrato con garantía GPremier no lleva garantes")
         if self.garantia == TipoGarantia.Garantes and not self.garantes:
             raise ValueError("la garantía 'Garantes' requiere al menos un garante")
+        # El email es obligatorio solo acá: el garante de una garantía propietaria
+        # respalda con su inmueble y el formulario ni se lo pide.
+        if self.garantia == TipoGarantia.Garantes and any(
+            not (garante.email or "").strip() for garante in self.garantes
+        ):
+            raise ValueError("cada garante necesita email")
         return self
 
 

@@ -11,10 +11,18 @@ from app.models.libro_diario import CuentaTransferencia, TipoMovimiento
 from app.schemas.cliente import ClienteUpdate
 from app.schemas.contrato import ContratoCreate
 from app.schemas.movimiento import MovimientoCreate
+from app.schemas.propiedad import PropiedadCreate
 from app.schemas.recibo import AjusteCreate
 
-UN_INQUILINO = [{"nombre": "Ana", "apellido": "Perez", "telefono": "1140000001", "dni": "30111222"}]
-UN_GARANTE = [{"nombre": "Luis", "apellido": "Gomez", "telefono": "1140000002"}]
+UN_INQUILINO = [{
+    "nombre": "Ana", "apellido": "Perez", "telefono": "1140000001", "dni": "30111222",
+    "email": "ana@test.com",
+}]
+UN_GARANTE = [{
+    "nombre": "Luis", "apellido": "Gomez", "telefono": "1140000002", "email": "luis@test.com",
+}]
+# Un garante de garantía propietaria: respalda con su inmueble, no tiene email.
+UN_GARANTE_SIN_EMAIL = [{"nombre": "Luis", "apellido": "Gomez", "telefono": "1140000002"}]
 
 
 def contrato(**overrides):
@@ -65,6 +73,29 @@ class TestContratoGarantia:
     def test_garantia_propietaria_acepta_no_llevar_garantes(self):
         creado = ContratoCreate(**contrato(garantia=TipoGarantia.GarantiaPropietaria))
         assert creado.garantes == []
+
+    def test_garantia_garantes_exige_email_en_cada_garante(self):
+        with pytest.raises(ValidationError, match="cada garante necesita email"):
+            ContratoCreate(**contrato(
+                garantia=TipoGarantia.Garantes, garantes=UN_GARANTE_SIN_EMAIL,
+            ))
+
+    def test_garantia_propietaria_no_pide_email_al_garante(self):
+        creado = ContratoCreate(**contrato(
+            garantia=TipoGarantia.GarantiaPropietaria, garantes=UN_GARANTE_SIN_EMAIL,
+        ))
+        assert creado.garantes[0].email is None
+
+
+class TestContratoInquilinos:
+    def test_inquilino_sin_email_falla(self):
+        sin_email = [{k: v for k, v in UN_INQUILINO[0].items() if k != "email"}]
+        with pytest.raises(ValidationError, match="email"):
+            ContratoCreate(**contrato(inquilinos=sin_email))
+
+    def test_inquilino_con_email_vacio_falla(self):
+        with pytest.raises(ValidationError, match="email"):
+            ContratoCreate(**contrato(inquilinos=[{**UN_INQUILINO[0], "email": ""}]))
 
 
 class TestContratoImportes:
@@ -160,8 +191,14 @@ class TestClienteUpdate:
         with pytest.raises(ValidationError):
             ClienteUpdate(**self.cliente(email=email))
 
-    def test_email_es_opcional(self):
-        assert ClienteUpdate(**self.cliente()).email is None
+    def test_email_es_obligatorio(self):
+        with pytest.raises(ValidationError, match="email"):
+            ClienteUpdate(**self.cliente())
+
+    @pytest.mark.parametrize("email", ["", "   "])
+    def test_email_vacio_falla(self, email):
+        with pytest.raises(ValidationError, match="email"):
+            ClienteUpdate(**self.cliente(email=email))
 
     def test_nombre_mas_largo_que_la_columna_falla(self):
         # La columna es varchar(15).
@@ -171,3 +208,51 @@ class TestClienteUpdate:
     def test_nombre_vacio_falla(self):
         with pytest.raises(ValidationError):
             ClienteUpdate(**self.cliente(nombre=""))
+
+
+class TestPropiedadCreate:
+    """El propietario nuevo se da de alta como cliente en el mismo POST, así que
+    necesita DNI y email; el existente viaja solo con su cliente_num."""
+
+    NUEVO = {
+        "porcentaje": 100, "nombre": "Juan", "apellido": "Garcia", "dni": "30123456",
+        "telefono": "1155253547", "email": "juan@test.com",
+    }
+
+    def propiedad(self, **overrides):
+        datos = {
+            "direccion": "Av. Siempre Viva 742", "comision": "6.5", "propietarios": [self.NUEVO],
+        }
+        datos.update(overrides)
+        return datos
+
+    def test_propietario_nuevo_completo_pasa(self):
+        creada = PropiedadCreate(**self.propiedad())
+        assert creada.propietarios[0].email == "juan@test.com"
+
+    def test_propietario_nuevo_sin_email_falla(self):
+        sin_email = {k: v for k, v in self.NUEVO.items() if k != "email"}
+        with pytest.raises(ValidationError, match="un propietario nuevo necesita email"):
+            PropiedadCreate(**self.propiedad(propietarios=[sin_email]))
+
+    def test_propietario_nuevo_con_email_vacio_falla(self):
+        # Es lo que mandaba el front cuando el campo quedaba en blanco.
+        with pytest.raises(ValidationError, match="email"):
+            PropiedadCreate(**self.propiedad(propietarios=[{**self.NUEVO, "email": ""}]))
+
+    def test_propietario_nuevo_sin_dni_falla(self):
+        sin_dni = {k: v for k, v in self.NUEVO.items() if k != "dni"}
+        with pytest.raises(ValidationError, match="un propietario nuevo necesita DNI"):
+            PropiedadCreate(**self.propiedad(propietarios=[sin_dni]))
+
+    def test_propietario_existente_no_necesita_email(self):
+        existente = {"cliente_num": 7, "porcentaje": 100}
+        creada = PropiedadCreate(**self.propiedad(propietarios=[existente]))
+        assert creada.propietarios[0].email is None
+
+    def test_porcentajes_deben_sumar_100(self):
+        with pytest.raises(ValidationError, match="deben sumar 100%"):
+            PropiedadCreate(**self.propiedad(propietarios=[
+                {"cliente_num": 7, "porcentaje": 60},
+                {"cliente_num": 8, "porcentaje": 30},
+            ]))

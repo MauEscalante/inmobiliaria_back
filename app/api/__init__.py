@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    ajustes_router,
     caja_router,
     clientes_router,
     contratos_router,
@@ -21,5 +22,6 @@ api_router.include_router(movimientos_router)
 api_router.include_router(caja_router)
 api_router.include_router(recibos_router)
 api_router.include_router(eventos_router)
+api_router.include_router(ajustes_router)
 
 __all__ = ["api_router"]

@@ -20,7 +20,9 @@ class Cliente(Base):
 	apellido = Column(String(15), nullable=False)
 	dni = Column(String(9), nullable=False, unique=True, index=True)
 	telefono = Column(String(15), nullable=False)
-	email = Column(String(100), nullable=True, unique=True, index=True)
+	# Obligatorio en la API (schemas), pero sin UNIQUE: dos personas pueden
+	# compartir casilla (un matrimonio co-inquilino, por ejemplo).
+	email = Column(String(100), nullable=True)
 	direccion = Column(String(255), nullable=True)
 	cuil = Column(String(15), nullable=True)
 	nacionalidad = Column(String(50), nullable=True)

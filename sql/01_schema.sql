@@ -46,10 +46,9 @@ CREATE TABLE cliente (
     tipo         ENUM('Inquilino', 'Propietario') NULL,
 
     PRIMARY KEY (cliente_num),
-    UNIQUE KEY uq_cliente_dni (dni),
-    -- MySQL permite múltiples NULL bajo un índice UNIQUE, así que los clientes
-    -- sin email conviven sin problema.
-    UNIQUE KEY uq_cliente_email (email)
+    UNIQUE KEY uq_cliente_dni (dni)
+    -- `email` es obligatorio en la API pero no lleva UNIQUE: dos personas pueden
+    -- compartir casilla (un matrimonio co-inquilino, por ejemplo).
 ) ENGINE=InnoDB;
 
 
@@ -208,10 +207,16 @@ CREATE TABLE garante (
 -- Historial de importes del contrato: una fila por período de vigencia entre
 -- ajustes. Alimenta la pantalla de Ajustes y el cálculo de re-ajustes (el
 -- re-ajuste debe tomar el valor guardado acá, no el ya redondeado del recibo).
+--
+-- `provisorio` marca el tramo que se calculó con un índice repetido porque el IPC
+-- del último mes del período todavía no estaba publicado. Al mes siguiente ese
+-- tramo se re-ajusta con el índice real y se abre el tramo definitivo; el
+-- provisorio no se pisa, porque ese importe ya se cobró.
 -- -----------------------------------------------------------------------------
 CREATE TABLE valor_historico (
     contrato        VARCHAR(10)   NOT NULL,
     importe_inicial DECIMAL(12,2) NOT NULL,
+    provisorio      TINYINT(1)    NOT NULL DEFAULT 0,
     fecha_inicio    DATE          NOT NULL,
     fecha_fin       DATE          NOT NULL,
 
